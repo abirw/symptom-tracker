@@ -14,14 +14,14 @@
     log: LogView,
     timeline: TimelineView,
     trends: TrendsView,
-    export: ExportView,
+    data: DataView,
   };
 
   const VIEW_TITLES = {
     log: "Log Entry",
     timeline: "Timeline",
     trends: "Trends",
-    export: "Export",
+    data: "Export & Import",
   };
 
   const initialized = new Set();

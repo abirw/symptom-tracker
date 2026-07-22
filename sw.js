@@ -8,7 +8,7 @@
  * because `install` re-fetches every URL in the list below, but a stale
  * cached entry for a since-removed URL would otherwise never get evicted.
  */
-const CACHE_NAME = "symptom-tracker-v1";
+const CACHE_NAME = "symptom-tracker-v2";
 
 const APP_SHELL = [
   "./",
@@ -17,11 +17,13 @@ const APP_SHELL = [
   "./css/style.css",
   "./vendor/chart.umd.min.js",
   "./js/db.js",
+  "./js/date-utils.js",
   "./js/pickers.js",
+  "./js/importer.js",
   "./js/log.js",
   "./js/timeline.js",
   "./js/trends.js",
-  "./js/export.js",
+  "./js/data.js",
   "./js/app.js",
   "./icons/icon-180.png",
   "./icons/icon-192.png",

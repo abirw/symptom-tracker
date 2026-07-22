@@ -376,13 +376,6 @@ const TimelineView = (() => {
     renderList();
   }
 
-  /** Converts a stored ISO timestamp to the local-time string a `datetime-local` input expects. */
-  function toLocalInputValue(iso) {
-    const d = new Date(iso);
-    const offsetMs = d.getTimezoneOffset() * 60000;
-    return new Date(d.getTime() - offsetMs).toISOString().slice(0, 16);
-  }
-
   function renderModalPickers() {
     Pickers.renderTagChips(container.querySelector("#modal-tag-chips"), tags, editSelectedTags, (name) => {
       if (editSelectedTags.has(name)) {
@@ -419,7 +412,7 @@ const TimelineView = (() => {
     editSelectedSeverity = entry.severity ?? null;
 
     container.querySelector("#modal-note-input").value = entry.note || "";
-    container.querySelector("#modal-timestamp-input").value = toLocalInputValue(entry.timestamp);
+    container.querySelector("#modal-timestamp-input").value = DateUtils.toLocalInputValue(entry.timestamp);
 
     renderModalPickers();
     container.querySelector("#entry-modal").classList.add("is-open");

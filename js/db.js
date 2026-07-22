@@ -120,22 +120,33 @@ const DB = (() => {
   // --- Tags ---
 
   /**
-   * Ensures a tag with this name exists, creating it (with `firstUsed` set to
-   * now) if it doesn't. `firstUsed` is what lets the Trends view clip a tag's
-   * chart to when it actually started being tracked, so re-touching an
-   * existing tag must NOT overwrite that date.
+   * Ensures a tag with this name exists, creating it if it doesn't.
+   * `firstUsed` is what lets the Trends view clip a tag's chart to when it
+   * actually started being tracked - so `occurredAt` should be the
+   * timestamp of the entry that's using this tag, not necessarily "now".
+   * If the tag already exists but `occurredAt` predates its `firstUsed`
+   * (e.g. a backdated entry, or an older entry from an import), `firstUsed`
+   * is corrected backwards to match; it's never pushed forward.
    * @param {string} name
+   * @param {string} [occurredAt] - ISO timestamp of the entry using this tag; defaults to now
    * @returns {Promise<object|null>} the tag record, or null for a blank name
    */
-  async function touchTag(name) {
+  async function touchTag(name, occurredAt = new Date().toISOString()) {
     const trimmed = name.trim();
     if (!trimmed) return null;
     const store = await tx("tags", "readwrite");
     const existing = await promisifyRequest(store.get(trimmed));
-    if (existing) return existing;
-    const record = { name: trimmed, firstUsed: new Date().toISOString(), color: null };
-    await promisifyRequest(store.add(record));
-    return record;
+    if (!existing) {
+      const record = { name: trimmed, firstUsed: occurredAt, color: null };
+      await promisifyRequest(store.add(record));
+      return record;
+    }
+    if (new Date(occurredAt) < new Date(existing.firstUsed)) {
+      const corrected = { ...existing, firstUsed: occurredAt };
+      await promisifyRequest(store.put(corrected));
+      return corrected;
+    }
+    return existing;
   }
 
   async function getAllTags() {
@@ -143,23 +154,79 @@ const DB = (() => {
     return promisifyRequest(store.getAll());
   }
 
+  /**
+   * Merges an imported tag record (from a JSON backup) into the local store.
+   * Unlike touchTag, this takes a full record (its own `firstUsed`/`color`)
+   * rather than inferring one from a single entry - used when restoring or
+   * combining backups, where the incoming record already carries its true
+   * history. The earlier of the two `firstUsed` dates always wins.
+   * @param {{name: string, firstUsed?: string, color?: string|null}} record
+   */
+  async function mergeTagRecord(record) {
+    const trimmed = (record.name || "").trim();
+    if (!trimmed) return null;
+    const store = await tx("tags", "readwrite");
+    const existing = await promisifyRequest(store.get(trimmed));
+    const incomingFirstUsed = record.firstUsed || new Date().toISOString();
+
+    if (!existing) {
+      const toStore = { name: trimmed, firstUsed: incomingFirstUsed, color: record.color || null };
+      await promisifyRequest(store.add(toStore));
+      return toStore;
+    }
+    if (new Date(incomingFirstUsed) < new Date(existing.firstUsed)) {
+      const merged = { ...existing, firstUsed: incomingFirstUsed, color: existing.color || record.color || null };
+      await promisifyRequest(store.put(merged));
+      return merged;
+    }
+    return existing;
+  }
+
   // --- Conditions ---
 
   /** Same idempotent create-if-missing pattern as touchTag, for the condition list. */
-  async function touchCondition(name) {
+  async function touchCondition(name, occurredAt = new Date().toISOString()) {
     const trimmed = name.trim();
     if (!trimmed) return null;
     const store = await tx("conditions", "readwrite");
     const existing = await promisifyRequest(store.get(trimmed));
-    if (existing) return existing;
-    const record = { name: trimmed, createdAt: new Date().toISOString() };
-    await promisifyRequest(store.add(record));
-    return record;
+    if (!existing) {
+      const record = { name: trimmed, createdAt: occurredAt };
+      await promisifyRequest(store.add(record));
+      return record;
+    }
+    if (new Date(occurredAt) < new Date(existing.createdAt)) {
+      const corrected = { ...existing, createdAt: occurredAt };
+      await promisifyRequest(store.put(corrected));
+      return corrected;
+    }
+    return existing;
   }
 
   async function getAllConditions() {
     const store = await tx("conditions", "readonly");
     return promisifyRequest(store.getAll());
+  }
+
+  /** Same merge-preferring-earliest-date pattern as mergeTagRecord, for conditions. */
+  async function mergeConditionRecord(record) {
+    const trimmed = (record.name || "").trim();
+    if (!trimmed) return null;
+    const store = await tx("conditions", "readwrite");
+    const existing = await promisifyRequest(store.get(trimmed));
+    const incomingCreatedAt = record.createdAt || new Date().toISOString();
+
+    if (!existing) {
+      const toStore = { name: trimmed, createdAt: incomingCreatedAt };
+      await promisifyRequest(store.add(toStore));
+      return toStore;
+    }
+    if (new Date(incomingCreatedAt) < new Date(existing.createdAt)) {
+      const merged = { ...existing, createdAt: incomingCreatedAt };
+      await promisifyRequest(store.put(merged));
+      return merged;
+    }
+    return existing;
   }
 
   return {
@@ -172,7 +239,9 @@ const DB = (() => {
     getAllEntries,
     touchTag,
     getAllTags,
+    mergeTagRecord,
     touchCondition,
     getAllConditions,
+    mergeConditionRecord,
   };
 })();

@@ -82,13 +82,6 @@ const LogView = (() => {
     });
   }
 
-  /** Local "now", formatted for a `datetime-local` input's value (which ignores timezone offset). */
-  function nowForInput() {
-    const now = new Date();
-    const offsetMs = now.getTimezoneOffset() * 60000;
-    return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
-  }
-
   async function loadPickers() {
     [allTags, allConditions] = await Promise.all([DB.getAllTags(), DB.getAllConditions()]);
     renderTagChips();
@@ -101,7 +94,7 @@ const LogView = (() => {
     selectedCondition = null;
     selectedSeverity = null;
     container.querySelector("#note-input").value = "";
-    container.querySelector("#timestamp-input").value = nowForInput();
+    container.querySelector("#timestamp-input").value = DateUtils.nowForInput();
     renderTagChips();
     renderConditionChips();
     renderSeverity();
@@ -144,12 +137,14 @@ const LogView = (() => {
       const timestampInput = container.querySelector("#timestamp-input").value;
       const timestamp = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
 
-      // Covers Enter-key selections that never hit the explicit Add button.
+      // Also corrects a tag/condition's firstUsed/createdAt backwards if this
+      // entry's (possibly backdated) timestamp predates it - e.g. retroactively
+      // logging a new tag for something that happened last week, not today.
       for (const name of selectedTags) {
-        await DB.touchTag(name);
+        await DB.touchTag(name, timestamp);
       }
       if (selectedCondition) {
-        await DB.touchCondition(selectedCondition);
+        await DB.touchCondition(selectedCondition, timestamp);
       }
 
       await DB.addEntry({
@@ -197,7 +192,7 @@ const LogView = (() => {
     });
 
     renderSeverity();
-    container.querySelector("#timestamp-input").value = nowForInput();
+    container.querySelector("#timestamp-input").value = DateUtils.nowForInput();
     await loadPickers();
   }
 

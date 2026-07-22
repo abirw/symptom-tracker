@@ -30,7 +30,7 @@
     <section id="view-log" class="view" data-view="log"></section>
     <section id="view-timeline" class="view" data-view="timeline" hidden></section>
     <section id="view-trends" class="view" data-view="trends" hidden></section>
-    <section id="view-export" class="view" data-view="export" hidden></section>
+    <section id="view-data" class="view" data-view="data" hidden></section>
   </main>
 
   <nav class="tab-bar">
@@ -54,12 +54,12 @@
       </svg>
       <span>Trends</span>
     </button>
-    <button class="tab-button" data-target="export">
+    <button class="tab-button" data-target="data">
       <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 15V4M8 8l4-4 4 4"></path>
         <path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"></path>
       </svg>
-      <span>Export</span>
+      <span>Data</span>
     </button>
   </nav>
 
@@ -67,11 +67,13 @@
        app keeps working fully offline per the local-first requirement. -->
   <script src="vendor/chart.umd.min.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/date-utils.js"></script>
   <script src="js/pickers.js"></script>
+  <script src="js/importer.js"></script>
   <script src="js/log.js"></script>
   <script src="js/timeline.js"></script>
   <script src="js/trends.js"></script>
-  <script src="js/export.js"></script>
+  <script src="js/data.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

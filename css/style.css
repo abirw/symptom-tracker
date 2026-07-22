@@ -644,6 +644,115 @@ textarea {
   margin-top: 1.5rem;
 }
 
+/* --- Import --- */
+
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.75rem 0;
+}
+
+.section-heading {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 0.75rem;
+}
+
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+input[type="file"] {
+  display: block;
+  width: 100%;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+}
+
+input[type="file"]::file-selector-button {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+  margin-right: 0.6rem;
+}
+
+.import-status {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin: 0.5rem 0 0;
+  min-height: 1.2em;
+}
+
+.import-preview {
+  margin-top: 0.75rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.import-preview p {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.import-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.import-candidate {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+}
+
+.import-candidate-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.import-candidate-summary {
+  flex: 1;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.import-candidate-edit-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 0.2rem;
+}
+
+.import-candidate-editor {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.import-candidate .timeline-item-tags,
+.import-candidate .timeline-item-note {
+  margin-top: 0.4rem;
+}
+
 /* --- Trends --- */
 
 .tracking-note {
