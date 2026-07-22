@@ -1,14 +1,16 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!-- Core document metadata -->
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
   <title>Symptom Tracker</title>
 
+  <!-- PWA manifest + theme color (JSON can't hold comments, see manifest.json directly) -->
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0b1210" />
 
-  <!-- iOS home screen support -->
+  <!-- iOS-specific home screen support; Safari ignores parts of the manifest -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Symptoms" />
@@ -18,26 +20,51 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>Symptom Tracker</h1>
+    <h1 id="app-title">Symptom Tracker</h1>
   </header>
 
+  <!-- One <section> per tab; app.js toggles the [hidden] attribute and lazily
+       calls each view module's init() the first time it's shown, then onShow()
+       on every subsequent activation. -->
   <main id="view-root">
     <section id="view-log" class="view" data-view="log"></section>
-
     <section id="view-timeline" class="view" data-view="timeline" hidden></section>
-
     <section id="view-trends" class="view" data-view="trends" hidden></section>
-
     <section id="view-export" class="view" data-view="export" hidden></section>
   </main>
 
   <nav class="tab-bar">
-    <button class="tab-button" data-target="log" aria-current="page">Log</button>
-    <button class="tab-button" data-target="timeline">Timeline</button>
-    <button class="tab-button" data-target="trends">Trends</button>
-    <button class="tab-button" data-target="export">Export</button>
+    <button class="tab-button" data-target="log" aria-current="page">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="4" y="4" width="16" height="16" rx="4"></rect>
+        <path d="M12 9v6M9 12h6"></path>
+      </svg>
+      <span>Log</span>
+    </button>
+    <button class="tab-button" data-target="timeline">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="8"></circle>
+        <path d="M12 8v4l3 2"></path>
+      </svg>
+      <span>Timeline</span>
+    </button>
+    <button class="tab-button" data-target="trends">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 19V13M12 19V9M19 19V5"></path>
+      </svg>
+      <span>Trends</span>
+    </button>
+    <button class="tab-button" data-target="export">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 15V4M8 8l4-4 4 4"></path>
+        <path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"></path>
+      </svg>
+      <span>Export</span>
+    </button>
   </nav>
 
+  <!-- Chart.js is vendored locally (vendor/), not loaded from a CDN, so the
+       app keeps working fully offline per the local-first requirement. -->
   <script src="vendor/chart.umd.min.js"></script>
   <script src="js/db.js"></script>
   <script src="js/pickers.js"></script>

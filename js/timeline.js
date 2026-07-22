@@ -1,6 +1,9 @@
-/* Timeline view: GitHub-style contribution heatmap + reverse-chronological
-   entry list, with filters, edit, and delete. */
-
+/**
+ * Timeline view: a GitHub-style contribution heatmap sitting above a
+ * reverse-chronological entry list, both driven by the same tag/condition
+ * filters. Tapping a heatmap day narrows the list to that date; tapping a
+ * list entry opens a bottom-sheet modal for editing or deleting it.
+ */
 const TimelineView = (() => {
   const HEATMAP_WEEKS = 52;
 
@@ -44,7 +47,7 @@ const TimelineView = (() => {
 
       <div id="timeline-list" class="timeline-list"></div>
 
-      <div id="entry-modal" class="modal-overlay" hidden>
+      <div id="entry-modal" class="modal-overlay">
         <div class="modal-sheet">
           <div class="modal-header">
             <button type="button" id="modal-close-btn" class="modal-header-btn">Cancel</button>
@@ -118,12 +121,14 @@ const TimelineView = (() => {
 
   // --- Shared tag/condition filtering (heatmap + list both respect these) ---
 
+  /** Entries matching the tag/condition filters only — the heatmap always shows this set. */
   function getTagConditionFiltered() {
     return entries
       .filter((e) => !filterTag || e.tags.includes(filterTag))
       .filter((e) => !filterCondition || e.condition === filterCondition);
   }
 
+  /** Same as above, plus the heatmap day filter if one's selected — this is what the list shows. */
   function getFilteredEntries() {
     let list = getTagConditionFiltered();
     if (selectedDay) {
@@ -144,6 +149,7 @@ const TimelineView = (() => {
 
   // --- Heatmap ---
 
+  /** Local (not UTC) YYYY-MM-DD key, used to group entries by calendar day. */
   function dateKey(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
@@ -155,6 +161,7 @@ const TimelineView = (() => {
     return d;
   }
 
+  /** Builds HEATMAP_WEEKS weeks of 7 days each, ending on the week containing today. */
   function buildHeatmapWeeks() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -176,6 +183,7 @@ const TimelineView = (() => {
     return weeks;
   }
 
+  /** Maps a raw entry count to one of the heatmap's 5 color intensity levels. */
   function levelForCount(count) {
     if (count <= 0) return 0;
     if (count === 1) return 1;
@@ -184,6 +192,7 @@ const TimelineView = (() => {
     return 4;
   }
 
+  /** Shows/hides the "Showing <date> only · Clear" banner above the list. */
   function renderDayFilterNote() {
     const noteEl = container.querySelector("#day-filter-note");
     if (!selectedDay) {
@@ -216,6 +225,7 @@ const TimelineView = (() => {
     noteEl.appendChild(clearBtn);
   }
 
+  /** Rebuilds the full heatmap grid + month labels from the current tag/condition filters. */
   function renderHeatmap() {
     const gridEl = container.querySelector("#heatmap-grid");
     const monthsEl = container.querySelector("#heatmap-months");
@@ -234,6 +244,7 @@ const TimelineView = (() => {
     let lastMonthKey = null;
 
     weeks.forEach((week) => {
+      // Label a column only when it contains the 1st-7th of a new month, GitHub-style.
       const firstOfMonthDay = week.find((d) => d.getDate() <= 7);
       const monthLabel = document.createElement("span");
       monthLabel.className = "heatmap-month-label";
@@ -256,6 +267,7 @@ const TimelineView = (() => {
         btn.className = "heatmap-day";
 
         if (date > today) {
+          // Future days within the current week: render as empty, non-interactive spacers.
           btn.classList.add("heatmap-day-empty");
           btn.disabled = true;
         } else {
@@ -268,7 +280,7 @@ const TimelineView = (() => {
           })}`;
           if (key === selectedDay) btn.classList.add("heatmap-day-selected");
           btn.addEventListener("click", () => {
-            selectedDay = selectedDay === key ? null : key;
+            selectedDay = selectedDay === key ? null : key; // tap again to clear
             renderHeatmap();
             renderDayFilterNote();
             renderList();
@@ -281,6 +293,7 @@ const TimelineView = (() => {
       gridEl.appendChild(col);
     });
 
+    // Scroll to the most recent week by default rather than the oldest.
     const scrollWrap = container.querySelector(".heatmap-scroll");
     scrollWrap.scrollLeft = scrollWrap.scrollWidth;
   }
@@ -318,6 +331,7 @@ const TimelineView = (() => {
       if (entry.severity) {
         const sev = document.createElement("span");
         sev.className = "severity-badge";
+        sev.dataset.severity = String(entry.severity);
         sev.textContent = `Sev ${entry.severity}`;
         header.appendChild(sev);
       }
@@ -362,6 +376,7 @@ const TimelineView = (() => {
     renderList();
   }
 
+  /** Converts a stored ISO timestamp to the local-time string a `datetime-local` input expects. */
   function toLocalInputValue(iso) {
     const d = new Date(iso);
     const offsetMs = d.getTimezoneOffset() * 60000;
@@ -393,6 +408,7 @@ const TimelineView = (() => {
     );
   }
 
+  /** Opens the edit modal pre-filled with `id`'s current values. */
   function openEntry(id) {
     const entry = entries.find((e) => e.id === id);
     if (!entry) return;
@@ -406,39 +422,46 @@ const TimelineView = (() => {
     container.querySelector("#modal-timestamp-input").value = toLocalInputValue(entry.timestamp);
 
     renderModalPickers();
-    container.querySelector("#entry-modal").hidden = false;
+    container.querySelector("#entry-modal").classList.add("is-open");
   }
 
   function closeModal() {
     editingEntry = null;
-    container.querySelector("#entry-modal").hidden = true;
+    container.querySelector("#entry-modal").classList.remove("is-open");
   }
 
   async function handleModalSubmit(event) {
     event.preventDefault();
     if (!editingEntry) return;
 
-    const note = container.querySelector("#modal-note-input").value.trim();
-    const timestampInput = container.querySelector("#modal-timestamp-input").value;
-    const timestamp = timestampInput ? new Date(timestampInput).toISOString() : editingEntry.timestamp;
+    const submitBtn = container.querySelector('#modal-form button[type="submit"]');
+    submitBtn.disabled = true;
 
-    const updated = {
-      ...editingEntry,
-      timestamp,
-      tags: Array.from(editSelectedTags),
-      condition: editSelectedCondition,
-      severity: editSelectedSeverity,
-      note,
-    };
+    try {
+      const note = container.querySelector("#modal-note-input").value.trim();
+      const timestampInput = container.querySelector("#modal-timestamp-input").value;
+      const timestamp = timestampInput ? new Date(timestampInput).toISOString() : editingEntry.timestamp;
 
-    await DB.updateEntry(updated);
+      const updated = {
+        ...editingEntry,
+        timestamp,
+        tags: Array.from(editSelectedTags),
+        condition: editSelectedCondition,
+        severity: editSelectedSeverity,
+        note,
+      };
 
-    const idx = entries.findIndex((e) => e.id === updated.id);
-    if (idx !== -1) entries[idx] = updated;
+      await DB.updateEntry(updated);
 
-    closeModal();
-    renderHeatmap();
-    renderList();
+      const idx = entries.findIndex((e) => e.id === updated.id);
+      if (idx !== -1) entries[idx] = updated;
+
+      closeModal();
+      renderHeatmap();
+      renderList();
+    } finally {
+      submitBtn.disabled = false;
+    }
   }
 
   async function handleDelete() {
@@ -468,9 +491,17 @@ const TimelineView = (() => {
       renderList();
     });
 
+    const modal = container.querySelector("#entry-modal");
     container.querySelector("#modal-close-btn").addEventListener("click", closeModal);
     container.querySelector("#modal-delete-btn").addEventListener("click", handleDelete);
     container.querySelector("#modal-form").addEventListener("submit", handleModalSubmit);
+    // Tapping the dimmed backdrop (not the sheet itself) closes the modal, like a native sheet.
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modal.classList.contains("is-open")) closeModal();
+    });
 
     await loadData();
   }

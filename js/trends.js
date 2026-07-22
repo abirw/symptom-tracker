@@ -1,5 +1,9 @@
-/* Trends view: per-tag frequency and severity charts, clipped to each tag's firstUsed date. */
-
+/**
+ * Trends view: per-tag frequency and severity charts (Chart.js). The one
+ * requirement this view has to get right per SPEC.md: a tag's chart must
+ * never render before that tag's actual `firstUsed` date, or a long-standing
+ * symptom you only recently started logging would look like sudden onset.
+ */
 const TrendsView = (() => {
   let container;
   let entries = [];
@@ -57,13 +61,14 @@ const TrendsView = (() => {
       });
 
     if (selectedTag !== "all" && !tags.some((t) => t.name === selectedTag)) {
-      selectedTag = "all";
+      selectedTag = "all"; // the previously-selected tag was deleted/renamed elsewhere
     }
     select.value = selectedTag;
   }
 
   // --- Bucketing helpers ---
 
+  /** Monday-anchored start-of-week for `date` (used to group entries into weekly buckets). */
   function bucketKeyWeek(date) {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
@@ -72,16 +77,19 @@ const TrendsView = (() => {
     return d;
   }
 
+  /** Start-of-month for `date` (used to group entries into monthly buckets). */
   function bucketKeyMonth(date) {
     const d = new Date(date);
     return new Date(d.getFullYear(), d.getMonth(), 1);
   }
 
+  /** Short windows get weekly bars/points; longer ones switch to monthly so the chart stays readable. */
   function chooseGranularity(start, end) {
     const spanDays = (end - start) / 86400000;
     return spanDays <= 70 ? "week" : "month";
   }
 
+  /** Generates every bucket start date from `start` to `end`, inclusive, at the given granularity. */
   function buildBuckets(start, end, granularity) {
     const buckets = [];
     const cur = granularity === "week" ? bucketKeyWeek(start) : bucketKeyMonth(start);
@@ -109,6 +117,13 @@ const TrendsView = (() => {
 
   // --- Data window ---
 
+  /**
+   * Resolves the actual [start, end] window to chart, given the selected tag
+   * and date-range filter. The critical rule lives here: when a specific tag
+   * is selected, `start` is clamped to that tag's firstUsed date no matter
+   * how far back the range filter would otherwise reach.
+   * @returns {{start: Date, end: Date, tagFirstUsed: Date|null}}
+   */
   function getEffectiveWindow() {
     const now = new Date();
     let rangeStart = null;
@@ -131,10 +146,12 @@ const TrendsView = (() => {
     } else if (rangeStart) {
       start = rangeStart;
     } else {
-      start = entries.reduce((min, e) => {
-        const t = new Date(e.timestamp);
-        return !min || t < min ? t : min;
-      }, null) || now;
+      // "All tags" + "all time": fall back to the earliest entry ever logged.
+      start =
+        entries.reduce((min, e) => {
+          const t = new Date(e.timestamp);
+          return !min || t < min ? t : min;
+        }, null) || now;
     }
 
     return { start, end: now, tagFirstUsed };
@@ -179,6 +196,7 @@ const TrendsView = (() => {
     };
   }
 
+  /** Recomputes the effective window/buckets and (re)draws both charts from scratch. */
   function renderCharts() {
     const { start, end, tagFirstUsed } = getEffectiveWindow();
 
@@ -196,6 +214,7 @@ const TrendsView = (() => {
       noteEl.hidden = true;
     }
 
+    // Chart.js throws if you construct a new Chart on a canvas that already has one attached.
     destroyCharts();
 
     if (entries.length === 0) {
@@ -235,6 +254,7 @@ const TrendsView = (() => {
       }
     });
 
+    // Buckets with no severity data stay `null` (a gap in the line) rather than a misleading 0.
     const sevAverages = buckets.map((_, i) => (sevCounts[i] ? +(sevSums[i] / sevCounts[i]).toFixed(2) : null));
 
     freqChart = new Chart(container.querySelector("#freq-chart").getContext("2d"), {

@@ -1,3 +1,4 @@
+/* Design tokens. Dark-only theme by design (no light-mode palette defined). */
 :root {
   color-scheme: dark;
   --bg: #0b1210;
@@ -10,13 +11,22 @@
   --border: #223330;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* Severity 1 (mild) -> 5 (severe) gradient, reused by the severity chips
+     and the Timeline's severity badge so intensity reads at a glance. */
+  --sev-1: #3aa66b;
+  --sev-2: #8bbf4f;
+  --sev-3: #e0b84a;
+  --sev-4: #e08a45;
+  --sev-5: #e0665a;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   height: 100%;
 }
 
@@ -28,7 +38,10 @@ body {
   -webkit-tap-highlight-color: transparent;
   display: flex;
   flex-direction: column;
+  overscroll-behavior-y: contain;
 }
+
+/* --- Layout shell --- */
 
 .app-header {
   padding: calc(var(--safe-top) + 0.75rem) 1rem 0.75rem;
@@ -42,15 +55,41 @@ body {
   font-weight: 600;
 }
 
+.error-banner {
+  background: var(--danger);
+  color: #2a0e0b;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 0.6rem 1rem;
+}
+
 #view-root {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 1rem;
   padding-bottom: calc(4.5rem + var(--safe-bottom));
 }
 
 .view[hidden] {
   display: none;
+}
+
+/* Applied by app.js each time a tab is switched to, for a subtle native-feeling transition. */
+@keyframes view-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.view.view-active {
+  animation: view-fade-in 0.18s ease-out;
 }
 
 .placeholder {
@@ -60,24 +99,33 @@ body {
   font-size: 0.95rem;
 }
 
+/* --- Tab bar --- */
+
 .tab-bar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   display: flex;
-  background: var(--surface);
+  background: rgba(19, 29, 27, 0.82);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   border-top: 1px solid var(--border);
   padding-bottom: var(--safe-bottom);
 }
 
 .tab-button {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   border: none;
   background: none;
   color: var(--text-dim);
-  font-size: 0.85rem;
-  padding: 0.85rem 0 0.9rem;
+  font-size: 0.75rem;
+  padding: 0.65rem 0 0.75rem;
   font-family: inherit;
 }
 
@@ -86,8 +134,50 @@ body {
   font-weight: 600;
 }
 
+.tab-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- Buttons & chips (shared across every view) --- */
+
 button {
   cursor: pointer;
+}
+
+/* Interactive controls shouldn't show iOS's text-selection callout/magnifier
+   or a native long-press menu; free-text content (notes) deliberately isn't
+   covered by this rule so it stays selectable/copyable. */
+button,
+.chip {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+
+button:active,
+.chip:active {
+  opacity: 0.75;
+}
+
+.primary-btn:active,
+.secondary-btn:active,
+.chip:active,
+.tab-button:active,
+.heatmap-day:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .chip {
@@ -107,6 +197,8 @@ button {
   border-color: var(--accent);
   color: #05201b;
 }
+
+/* --- Form fields (Log screen + Timeline edit modal) --- */
 
 .field {
   margin-bottom: 1.25rem;
@@ -139,6 +231,8 @@ button {
   flex: 1;
 }
 
+/* Font-size is kept at 16px (1rem) minimum on every text input/select below -
+   anything smaller makes iOS Safari auto-zoom the page on focus. */
 input[type="text"],
 input[type="datetime-local"],
 textarea {
@@ -178,6 +272,34 @@ textarea {
   text-align: center;
 }
 
+/* Severity 1-5 color coding: neutral until selected, then colored by level
+   (green -> red) so scanning a form or the timeline reads severity at a glance. */
+.severity-chip[data-severity="1"][aria-pressed="true"] {
+  background: var(--sev-1);
+  border-color: var(--sev-1);
+  color: #08150f;
+}
+.severity-chip[data-severity="2"][aria-pressed="true"] {
+  background: var(--sev-2);
+  border-color: var(--sev-2);
+  color: #111a08;
+}
+.severity-chip[data-severity="3"][aria-pressed="true"] {
+  background: var(--sev-3);
+  border-color: var(--sev-3);
+  color: #1a1305;
+}
+.severity-chip[data-severity="4"][aria-pressed="true"] {
+  background: var(--sev-4);
+  border-color: var(--sev-4);
+  color: #1a0e05;
+}
+.severity-chip[data-severity="5"][aria-pressed="true"] {
+  background: var(--sev-5);
+  border-color: var(--sev-5);
+  color: #1a0908;
+}
+
 .primary-btn {
   width: 100%;
   background: var(--accent);
@@ -190,6 +312,11 @@ textarea {
   margin-top: 0.5rem;
 }
 
+.primary-btn:disabled,
+.secondary-btn:disabled {
+  opacity: 0.6;
+}
+
 .confirmation {
   text-align: center;
   color: var(--accent);
@@ -197,7 +324,7 @@ textarea {
   margin-top: 0.75rem;
 }
 
-/* Timeline */
+/* --- Timeline: filters, heatmap, entry list --- */
 
 .filter-bar {
   display: flex;
@@ -213,7 +340,7 @@ textarea {
   color: var(--text);
   border-radius: 10px;
   padding: 0.5rem 0.6rem;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-family: inherit;
 }
 
@@ -233,7 +360,7 @@ textarea {
 .heatmap-months {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 12px;
+  grid-auto-columns: 14px;
   gap: 3px;
   font-size: 0.65rem;
   color: var(--text-dim);
@@ -249,20 +376,20 @@ textarea {
 .heatmap-grid {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 12px;
+  grid-auto-columns: 14px;
   gap: 3px;
   min-width: max-content;
 }
 
 .heatmap-week {
   display: grid;
-  grid-template-rows: repeat(7, 12px);
+  grid-template-rows: repeat(7, 14px);
   gap: 3px;
 }
 
 .heatmap-day {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 3px;
   border: none;
   padding: 0;
@@ -280,19 +407,15 @@ textarea {
 .heatmap-day[data-level="0"] {
   background: var(--surface-raised);
 }
-
 .heatmap-day[data-level="1"] {
   background: #164a42;
 }
-
 .heatmap-day[data-level="2"] {
   background: #1f7a6c;
 }
-
 .heatmap-day[data-level="3"] {
   background: #27a390;
 }
-
 .heatmap-day[data-level="4"] {
   background: #2fb8a1;
 }
@@ -371,11 +494,30 @@ textarea {
 .severity-badge {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--accent);
-  background: rgba(47, 184, 161, 0.12);
   border-radius: 999px;
   padding: 0.15rem 0.55rem;
   white-space: nowrap;
+}
+
+.severity-badge[data-severity="1"] {
+  color: var(--sev-1);
+  background: rgba(58, 166, 107, 0.15);
+}
+.severity-badge[data-severity="2"] {
+  color: var(--sev-2);
+  background: rgba(139, 191, 79, 0.15);
+}
+.severity-badge[data-severity="3"] {
+  color: var(--sev-3);
+  background: rgba(224, 184, 74, 0.15);
+}
+.severity-badge[data-severity="4"] {
+  color: var(--sev-4);
+  background: rgba(224, 138, 69, 0.15);
+}
+.severity-badge[data-severity="5"] {
+  color: var(--sev-5);
+  background: rgba(224, 102, 90, 0.15);
 }
 
 .timeline-item-tags {
@@ -405,19 +547,29 @@ textarea {
   overflow: hidden;
 }
 
-/* Entry edit modal */
+/* --- Entry edit modal (bottom sheet) --- */
 
+/* Kept permanently in the DOM (not toggled via [hidden]) so the slide/fade
+   transition below can animate; .is-open is what actually shows it. */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: flex-end;
   z-index: 20;
+  background: rgba(0, 0, 0, 0);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.2s ease, background-color 0.2s ease, visibility 0s linear 0.2s;
 }
 
-.modal-overlay[hidden] {
-  display: none;
+.modal-overlay.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  background: rgba(0, 0, 0, 0.5);
+  transition: opacity 0.2s ease, background-color 0.2s ease;
 }
 
 .modal-sheet {
@@ -427,6 +579,12 @@ textarea {
   max-height: 88vh;
   overflow-y: auto;
   width: 100%;
+  transform: translateY(100%);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.modal-overlay.is-open .modal-sheet {
+  transform: translateY(0);
 }
 
 .modal-header {
@@ -454,7 +612,7 @@ textarea {
   color: var(--danger);
 }
 
-/* Export */
+/* --- Export --- */
 
 .export-summary {
   color: var(--text-dim);
@@ -486,7 +644,7 @@ textarea {
   margin-top: 1.5rem;
 }
 
-/* Trends */
+/* --- Trends --- */
 
 .tracking-note {
   background: var(--surface-raised);
@@ -518,4 +676,17 @@ textarea {
 .chart-wrap {
   position: relative;
   height: 220px;
+}
+
+/* --- Motion --- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,11 +1,22 @@
-/* Hand-rolled IndexedDB wrapper. No external dependencies. */
-
+/**
+ * Hand-rolled IndexedDB wrapper — no external dependency. Exposes three
+ * object stores: `entries` (the logged symptom entries), `tags`, and
+ * `conditions` (both "grow as you go" lookup lists per SPEC.md). Every
+ * public method returns a Promise; there is no in-memory cache here, callers
+ * (the view modules) hold their own copies for the duration of a render.
+ */
 const DB = (() => {
   const DB_NAME = "symptom-tracker";
   const DB_VERSION = 1;
 
   let dbPromise = null;
 
+  /**
+   * Opens (or creates, on first run) the database and its object stores.
+   * Safe to call repeatedly — the underlying open request only happens once
+   * per page load, subsequent calls just await the same cached promise.
+   * @returns {Promise<IDBDatabase>}
+   */
   function open() {
     if (dbPromise) return dbPromise;
 
@@ -38,10 +49,13 @@ const DB = (() => {
     return dbPromise;
   }
 
-  function tx(storeName, mode) {
-    return open().then((db) => db.transaction(storeName, mode).objectStore(storeName));
+  /** Opens a transaction on `storeName` and returns its object store, once the DB is ready. */
+  async function tx(storeName, mode) {
+    const db = await open();
+    return db.transaction(storeName, mode).objectStore(storeName);
   }
 
+  /** Wraps a raw IDBRequest in a Promise so call sites can use async/await. */
   function promisifyRequest(req) {
     return new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
@@ -49,6 +63,7 @@ const DB = (() => {
     });
   }
 
+  /** RFC4122 v4 UUID, with a manual fallback for browsers lacking crypto.randomUUID. */
   function uuid() {
     if (crypto.randomUUID) return crypto.randomUUID();
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -60,6 +75,12 @@ const DB = (() => {
 
   // --- Entries ---
 
+  /**
+   * Inserts a new entry, filling in any field the caller omitted (id,
+   * timestamp) with sensible defaults.
+   * @param {{id?: string, timestamp?: string, tags?: string[], condition?: string|null, severity?: number|null, note?: string}} entry
+   * @returns {Promise<object>} the full record as stored
+   */
   async function addEntry(entry) {
     const record = {
       id: entry.id || uuid(),
@@ -74,6 +95,7 @@ const DB = (() => {
     return record;
   }
 
+  /** Overwrites an existing entry by id (the record must already carry its `id`). */
   async function updateEntry(entry) {
     const store = await tx("entries", "readwrite");
     await promisifyRequest(store.put(entry));
@@ -97,6 +119,14 @@ const DB = (() => {
 
   // --- Tags ---
 
+  /**
+   * Ensures a tag with this name exists, creating it (with `firstUsed` set to
+   * now) if it doesn't. `firstUsed` is what lets the Trends view clip a tag's
+   * chart to when it actually started being tracked, so re-touching an
+   * existing tag must NOT overwrite that date.
+   * @param {string} name
+   * @returns {Promise<object|null>} the tag record, or null for a blank name
+   */
   async function touchTag(name) {
     const trimmed = name.trim();
     if (!trimmed) return null;
@@ -115,6 +145,7 @@ const DB = (() => {
 
   // --- Conditions ---
 
+  /** Same idempotent create-if-missing pattern as touchTag, for the condition list. */
   async function touchCondition(name) {
     const trimmed = name.trim();
     if (!trimmed) return null;

@@ -1,5 +1,10 @@
-/* Export (JSON + CSV) via the iOS share sheet, falling back to a direct download. */
-
+/**
+ * Export view: dumps all stored data as JSON (full fidelity) or CSV (for a
+ * spreadsheet), handed off via the Web Share API so iOS shows its native
+ * share sheet. Falls back to a plain browser download wherever share isn't
+ * available (desktop browsers, older Safari, or if the user cancels a share
+ * for a reason other than dismissing it).
+ */
 const ExportView = (() => {
   let container;
 
@@ -10,6 +15,7 @@ const ExportView = (() => {
     return `symptom-tracker-export-${stamp}.${ext}`;
   }
 
+  /** Quotes a CSV cell only if it contains a comma, quote, or newline, escaping embedded quotes. */
   function escapeCsvCell(value) {
     const str = String(value);
     return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
@@ -28,6 +34,7 @@ const ExportView = (() => {
     return [header, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\r\n");
   }
 
+  /** Direct-download fallback: creates a throwaway object URL + <a download> click. */
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -39,6 +46,11 @@ const ExportView = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  /**
+   * Hands `blob` to the OS share sheet if the platform supports sharing
+   * files, otherwise falls back to a direct download.
+   * @returns {Promise<"shared"|"cancelled"|"downloaded">}
+   */
   async function shareOrDownload(blob, filename, mimeType) {
     const file = new File([blob], filename, { type: mimeType });
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -46,8 +58,8 @@ const ExportView = (() => {
         await navigator.share({ files: [file] });
         return "shared";
       } catch (err) {
-        if (err.name === "AbortError") return "cancelled";
-        // Fall through to the download fallback for any other share failure.
+        if (err.name === "AbortError") return "cancelled"; // user dismissed the share sheet
+        // Any other failure: fall through to the download fallback below.
       }
     }
     downloadBlob(blob, filename);
@@ -78,6 +90,7 @@ const ExportView = (() => {
     el.textContent = message || "";
   }
 
+  /** Disables `button` and swaps its label while `fn` runs, then reports the outcome via setStatus. */
   async function withStatus(button, workingLabel, fn) {
     const original = button.textContent;
     button.disabled = true;

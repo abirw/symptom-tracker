@@ -1,5 +1,9 @@
-/* Log Entry screen. */
-
+/**
+ * Log Entry screen: the fast-path form for recording a new symptom entry.
+ * Tags/condition are picked from existing chips or typed fresh (created
+ * on-the-fly via DB.touchTag/touchCondition); every field except tags is
+ * optional per SPEC.md ("never require every field").
+ */
 const LogView = (() => {
   let container;
   let selectedTags = new Set();
@@ -46,7 +50,7 @@ const LogView = (() => {
         </div>
 
         <button type="submit" class="primary-btn">Save Entry</button>
-        <p id="save-confirmation" class="confirmation" hidden>Saved</p>
+        <p id="save-confirmation" class="confirmation" hidden>✓ Saved</p>
       </form>
     `;
   }
@@ -78,6 +82,7 @@ const LogView = (() => {
     });
   }
 
+  /** Local "now", formatted for a `datetime-local` input's value (which ignores timezone offset). */
   function nowForInput() {
     const now = new Date();
     const offsetMs = now.getTimezoneOffset() * 60000;
@@ -90,6 +95,7 @@ const LogView = (() => {
     renderConditionChips();
   }
 
+  /** Clears the form back to its just-opened state after a successful save. */
   function resetForm() {
     selectedTags = new Set();
     selectedCondition = null;
@@ -129,28 +135,36 @@ const LogView = (() => {
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const note = container.querySelector("#note-input").value.trim();
-    const timestampInput = container.querySelector("#timestamp-input").value;
-    const timestamp = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
 
-    // Covers Enter-key selections that never hit the explicit Add button.
-    for (const name of selectedTags) {
-      await DB.touchTag(name);
+    const submitBtn = container.querySelector('button[type="submit"]');
+    submitBtn.disabled = true; // guard against a double-tap creating two entries
+
+    try {
+      const note = container.querySelector("#note-input").value.trim();
+      const timestampInput = container.querySelector("#timestamp-input").value;
+      const timestamp = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+
+      // Covers Enter-key selections that never hit the explicit Add button.
+      for (const name of selectedTags) {
+        await DB.touchTag(name);
+      }
+      if (selectedCondition) {
+        await DB.touchCondition(selectedCondition);
+      }
+
+      await DB.addEntry({
+        timestamp,
+        tags: Array.from(selectedTags),
+        condition: selectedCondition,
+        severity: selectedSeverity,
+        note,
+      });
+
+      showConfirmation();
+      resetForm();
+    } finally {
+      submitBtn.disabled = false;
     }
-    if (selectedCondition) {
-      await DB.touchCondition(selectedCondition);
-    }
-
-    await DB.addEntry({
-      timestamp,
-      tags: Array.from(selectedTags),
-      condition: selectedCondition,
-      severity: selectedSeverity,
-      note,
-    });
-
-    showConfirmation();
-    resetForm();
   }
 
   function showConfirmation() {

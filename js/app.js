@@ -1,6 +1,14 @@
+/**
+ * App shell: wires up tab navigation across the four view modules (each
+ * loaded as its own <script> before this file) and boots the service worker.
+ * Each view module exposes `init()` (called once, builds its DOM/listeners)
+ * and optionally `onShow()` (called on every later activation, to refresh
+ * data another tab may have changed).
+ */
 (() => {
   const tabButtons = document.querySelectorAll(".tab-button");
   const views = document.querySelectorAll(".view");
+  const appTitle = document.getElementById("app-title");
 
   const viewModules = {
     log: LogView,
@@ -8,12 +16,29 @@
     trends: TrendsView,
     export: ExportView,
   };
+
+  const VIEW_TITLES = {
+    log: "Log Entry",
+    timeline: "Timeline",
+    trends: "Trends",
+    export: "Export",
+  };
+
   const initialized = new Set();
 
+  /** Shows the named view's section, updates the tab bar + header, and (lazily) inits/refreshes it. */
   function showView(name) {
     views.forEach((view) => {
-      view.hidden = view.dataset.view !== name;
+      const isTarget = view.dataset.view === name;
+      view.hidden = !isTarget;
+      if (isTarget) {
+        // Re-trigger the CSS fade-in animation on every switch, not just the first.
+        view.classList.remove("view-active");
+        void view.offsetWidth; // force reflow so the animation restarts
+        view.classList.add("view-active");
+      }
     });
+
     tabButtons.forEach((btn) => {
       if (btn.dataset.target === name) {
         btn.setAttribute("aria-current", "page");
@@ -21,6 +46,9 @@
         btn.removeAttribute("aria-current");
       }
     });
+
+    appTitle.textContent = VIEW_TITLES[name] || "Symptom Tracker";
+
     const mod = viewModules[name];
     if (!mod) return;
     if (!initialized.has(name)) {
@@ -44,8 +72,23 @@
     });
   }
 
+  /** Shown only if IndexedDB fails to open (e.g. some private-browsing modes restrict it). */
+  function showStorageError() {
+    const banner = document.createElement("p");
+    banner.className = "error-banner";
+    banner.textContent =
+      "Couldn't open local storage on this device. Try reloading, or check Safari's privacy settings for this site.";
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+
   async function main() {
-    await DB.open();
+    try {
+      await DB.open();
+    } catch (err) {
+      console.error("Failed to open IndexedDB:", err);
+      showStorageError();
+      return;
+    }
     showView("log");
     registerServiceWorker();
   }
