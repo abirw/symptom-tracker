@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+
+# Defensive: never let a manual data export land in the repo.
+symptom-tracker-export-*.json
+symptom-tracker-export-*.csv

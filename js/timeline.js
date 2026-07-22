@@ -1,0 +1,479 @@
+/* Timeline view: GitHub-style contribution heatmap + reverse-chronological
+   entry list, with filters, edit, and delete. */
+
+const TimelineView = (() => {
+  const HEATMAP_WEEKS = 52;
+
+  let container;
+  let entries = [];
+  let tags = [];
+  let conditions = [];
+  let filterTag = "";
+  let filterCondition = "";
+  let selectedDay = null; // "YYYY-MM-DD" from tapping a heatmap cell, or null
+
+  let editingEntry = null;
+  let editSelectedTags = new Set();
+  let editSelectedCondition = null;
+  let editSelectedSeverity = null;
+
+  function render() {
+    container.innerHTML = `
+      <div class="filter-bar">
+        <select id="filter-tag"></select>
+        <select id="filter-condition"></select>
+      </div>
+
+      <div class="heatmap-card">
+        <div class="heatmap-scroll">
+          <div id="heatmap-months" class="heatmap-months"></div>
+          <div id="heatmap-grid" class="heatmap-grid"></div>
+        </div>
+        <div class="heatmap-legend">
+          <span>Less</span>
+          <span class="heatmap-day" data-level="0"></span>
+          <span class="heatmap-day" data-level="1"></span>
+          <span class="heatmap-day" data-level="2"></span>
+          <span class="heatmap-day" data-level="3"></span>
+          <span class="heatmap-day" data-level="4"></span>
+          <span>More</span>
+        </div>
+      </div>
+
+      <p id="day-filter-note" class="day-filter-note" hidden></p>
+
+      <div id="timeline-list" class="timeline-list"></div>
+
+      <div id="entry-modal" class="modal-overlay" hidden>
+        <div class="modal-sheet">
+          <div class="modal-header">
+            <button type="button" id="modal-close-btn" class="modal-header-btn">Cancel</button>
+            <h2>Edit Entry</h2>
+            <button type="button" id="modal-delete-btn" class="modal-header-btn modal-delete">Delete</button>
+          </div>
+          <form id="modal-form">
+            <div class="field">
+              <label>Tags</label>
+              <div id="modal-tag-chips" class="chip-row"></div>
+            </div>
+            <div class="field">
+              <label>Condition</label>
+              <div id="modal-condition-chips" class="chip-row"></div>
+            </div>
+            <div class="field">
+              <label>Severity</label>
+              <div id="modal-severity-row" class="severity-row"></div>
+            </div>
+            <div class="field">
+              <label for="modal-note-input">Note</label>
+              <textarea id="modal-note-input" rows="4"></textarea>
+            </div>
+            <div class="field">
+              <label for="modal-timestamp-input">Time</label>
+              <input type="datetime-local" id="modal-timestamp-input" />
+            </div>
+            <button type="submit" class="primary-btn">Save Changes</button>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function populateFilterOptions() {
+    const tagSelect = container.querySelector("#filter-tag");
+    const condSelect = container.querySelector("#filter-condition");
+
+    tagSelect.innerHTML = "";
+    const allTagsOpt = document.createElement("option");
+    allTagsOpt.value = "";
+    allTagsOpt.textContent = "All tags";
+    tagSelect.appendChild(allTagsOpt);
+    tags
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t.name;
+        opt.textContent = t.name;
+        tagSelect.appendChild(opt);
+      });
+    tagSelect.value = filterTag;
+
+    condSelect.innerHTML = "";
+    const allCondOpt = document.createElement("option");
+    allCondOpt.value = "";
+    allCondOpt.textContent = "All conditions";
+    condSelect.appendChild(allCondOpt);
+    conditions
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.name;
+        opt.textContent = c.name;
+        condSelect.appendChild(opt);
+      });
+    condSelect.value = filterCondition;
+  }
+
+  // --- Shared tag/condition filtering (heatmap + list both respect these) ---
+
+  function getTagConditionFiltered() {
+    return entries
+      .filter((e) => !filterTag || e.tags.includes(filterTag))
+      .filter((e) => !filterCondition || e.condition === filterCondition);
+  }
+
+  function getFilteredEntries() {
+    let list = getTagConditionFiltered();
+    if (selectedDay) {
+      list = list.filter((e) => dateKey(new Date(e.timestamp)) === selectedDay);
+    }
+    return list.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  }
+
+  function formatDateTime(iso) {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  // --- Heatmap ---
+
+  function dateKey(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  function startOfWeekSun(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay());
+    return d;
+  }
+
+  function buildHeatmapWeeks() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const firstWeekStart = startOfWeekSun(today);
+    firstWeekStart.setDate(firstWeekStart.getDate() - (HEATMAP_WEEKS - 1) * 7);
+
+    const weeks = [];
+    for (let w = 0; w < HEATMAP_WEEKS; w++) {
+      const weekStart = new Date(firstWeekStart);
+      weekStart.setDate(weekStart.getDate() + w * 7);
+      const days = [];
+      for (let d = 0; d < 7; d++) {
+        const date = new Date(weekStart);
+        date.setDate(date.getDate() + d);
+        days.push(date);
+      }
+      weeks.push(days);
+    }
+    return weeks;
+  }
+
+  function levelForCount(count) {
+    if (count <= 0) return 0;
+    if (count === 1) return 1;
+    if (count === 2) return 2;
+    if (count === 3) return 3;
+    return 4;
+  }
+
+  function renderDayFilterNote() {
+    const noteEl = container.querySelector("#day-filter-note");
+    if (!selectedDay) {
+      noteEl.hidden = true;
+      noteEl.innerHTML = "";
+      return;
+    }
+    noteEl.hidden = false;
+    noteEl.innerHTML = "";
+
+    const label = document.createElement("span");
+    const [y, m, d] = selectedDay.split("-").map(Number);
+    label.textContent = `Showing ${new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })} only`;
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Clear";
+    clearBtn.addEventListener("click", () => {
+      selectedDay = null;
+      renderHeatmap();
+      renderDayFilterNote();
+      renderList();
+    });
+
+    noteEl.appendChild(label);
+    noteEl.appendChild(clearBtn);
+  }
+
+  function renderHeatmap() {
+    const gridEl = container.querySelector("#heatmap-grid");
+    const monthsEl = container.querySelector("#heatmap-months");
+    gridEl.innerHTML = "";
+    monthsEl.innerHTML = "";
+
+    const weeks = buildHeatmapWeeks();
+    const counts = new Map();
+    getTagConditionFiltered().forEach((e) => {
+      const key = dateKey(new Date(e.timestamp));
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let lastMonthKey = null;
+
+    weeks.forEach((week) => {
+      const firstOfMonthDay = week.find((d) => d.getDate() <= 7);
+      const monthLabel = document.createElement("span");
+      monthLabel.className = "heatmap-month-label";
+      if (firstOfMonthDay) {
+        const monthKey = `${firstOfMonthDay.getFullYear()}-${firstOfMonthDay.getMonth()}`;
+        if (monthKey !== lastMonthKey) {
+          monthLabel.textContent = firstOfMonthDay.toLocaleDateString(undefined, { month: "short" });
+          lastMonthKey = monthKey;
+        }
+      }
+      monthsEl.appendChild(monthLabel);
+
+      const col = document.createElement("div");
+      col.className = "heatmap-week";
+
+      week.forEach((date) => {
+        const key = dateKey(date);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "heatmap-day";
+
+        if (date > today) {
+          btn.classList.add("heatmap-day-empty");
+          btn.disabled = true;
+        } else {
+          const count = counts.get(key) || 0;
+          btn.dataset.level = String(levelForCount(count));
+          btn.title = `${count} ${count === 1 ? "entry" : "entries"} on ${date.toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}`;
+          if (key === selectedDay) btn.classList.add("heatmap-day-selected");
+          btn.addEventListener("click", () => {
+            selectedDay = selectedDay === key ? null : key;
+            renderHeatmap();
+            renderDayFilterNote();
+            renderList();
+          });
+        }
+
+        col.appendChild(btn);
+      });
+
+      gridEl.appendChild(col);
+    });
+
+    const scrollWrap = container.querySelector(".heatmap-scroll");
+    scrollWrap.scrollLeft = scrollWrap.scrollWidth;
+  }
+
+  // --- Entry list ---
+
+  function renderList() {
+    const listEl = container.querySelector("#timeline-list");
+    listEl.innerHTML = "";
+    const filtered = getFilteredEntries();
+
+    if (filtered.length === 0) {
+      const p = document.createElement("p");
+      p.className = "placeholder";
+      p.textContent =
+        entries.length === 0 ? "No entries yet — log your first one." : "No entries match these filters.";
+      listEl.appendChild(p);
+      return;
+    }
+
+    filtered.forEach((entry) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "timeline-item";
+      item.dataset.id = entry.id;
+
+      const header = document.createElement("div");
+      header.className = "timeline-item-header";
+
+      const date = document.createElement("span");
+      date.className = "timeline-date";
+      date.textContent = formatDateTime(entry.timestamp);
+      header.appendChild(date);
+
+      if (entry.severity) {
+        const sev = document.createElement("span");
+        sev.className = "severity-badge";
+        sev.textContent = `Sev ${entry.severity}`;
+        header.appendChild(sev);
+      }
+
+      item.appendChild(header);
+
+      if ((entry.tags && entry.tags.length) || entry.condition) {
+        const tagRow = document.createElement("div");
+        tagRow.className = "timeline-item-tags";
+        (entry.tags || []).forEach((name) => {
+          const chip = document.createElement("span");
+          chip.className = "chip chip-static";
+          chip.textContent = name;
+          tagRow.appendChild(chip);
+        });
+        if (entry.condition) {
+          const condChip = document.createElement("span");
+          condChip.className = "chip chip-static chip-condition";
+          condChip.textContent = entry.condition;
+          tagRow.appendChild(condChip);
+        }
+        item.appendChild(tagRow);
+      }
+
+      if (entry.note) {
+        const note = document.createElement("div");
+        note.className = "timeline-item-note";
+        note.textContent = entry.note;
+        item.appendChild(note);
+      }
+
+      item.addEventListener("click", () => openEntry(entry.id));
+      listEl.appendChild(item);
+    });
+  }
+
+  async function loadData() {
+    [entries, tags, conditions] = await Promise.all([DB.getAllEntries(), DB.getAllTags(), DB.getAllConditions()]);
+    populateFilterOptions();
+    renderHeatmap();
+    renderDayFilterNote();
+    renderList();
+  }
+
+  function toLocalInputValue(iso) {
+    const d = new Date(iso);
+    const offsetMs = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offsetMs).toISOString().slice(0, 16);
+  }
+
+  function renderModalPickers() {
+    Pickers.renderTagChips(container.querySelector("#modal-tag-chips"), tags, editSelectedTags, (name) => {
+      if (editSelectedTags.has(name)) {
+        editSelectedTags.delete(name);
+      } else {
+        editSelectedTags.add(name);
+      }
+    });
+    Pickers.renderConditionChips(
+      container.querySelector("#modal-condition-chips"),
+      conditions,
+      () => editSelectedCondition,
+      (name) => {
+        editSelectedCondition = editSelectedCondition === name ? null : name;
+      }
+    );
+    Pickers.renderSeverity(
+      container.querySelector("#modal-severity-row"),
+      () => editSelectedSeverity,
+      (val) => {
+        editSelectedSeverity = editSelectedSeverity === val ? null : val;
+      }
+    );
+  }
+
+  function openEntry(id) {
+    const entry = entries.find((e) => e.id === id);
+    if (!entry) return;
+
+    editingEntry = entry;
+    editSelectedTags = new Set(entry.tags || []);
+    editSelectedCondition = entry.condition || null;
+    editSelectedSeverity = entry.severity ?? null;
+
+    container.querySelector("#modal-note-input").value = entry.note || "";
+    container.querySelector("#modal-timestamp-input").value = toLocalInputValue(entry.timestamp);
+
+    renderModalPickers();
+    container.querySelector("#entry-modal").hidden = false;
+  }
+
+  function closeModal() {
+    editingEntry = null;
+    container.querySelector("#entry-modal").hidden = true;
+  }
+
+  async function handleModalSubmit(event) {
+    event.preventDefault();
+    if (!editingEntry) return;
+
+    const note = container.querySelector("#modal-note-input").value.trim();
+    const timestampInput = container.querySelector("#modal-timestamp-input").value;
+    const timestamp = timestampInput ? new Date(timestampInput).toISOString() : editingEntry.timestamp;
+
+    const updated = {
+      ...editingEntry,
+      timestamp,
+      tags: Array.from(editSelectedTags),
+      condition: editSelectedCondition,
+      severity: editSelectedSeverity,
+      note,
+    };
+
+    await DB.updateEntry(updated);
+
+    const idx = entries.findIndex((e) => e.id === updated.id);
+    if (idx !== -1) entries[idx] = updated;
+
+    closeModal();
+    renderHeatmap();
+    renderList();
+  }
+
+  async function handleDelete() {
+    if (!editingEntry) return;
+    if (!confirm("Delete this entry? This can't be undone.")) return;
+
+    await DB.deleteEntry(editingEntry.id);
+    entries = entries.filter((e) => e.id !== editingEntry.id);
+
+    closeModal();
+    renderHeatmap();
+    renderList();
+  }
+
+  async function init() {
+    container = document.getElementById("view-timeline");
+    render();
+
+    container.querySelector("#filter-tag").addEventListener("change", (e) => {
+      filterTag = e.target.value;
+      renderHeatmap();
+      renderList();
+    });
+    container.querySelector("#filter-condition").addEventListener("change", (e) => {
+      filterCondition = e.target.value;
+      renderHeatmap();
+      renderList();
+    });
+
+    container.querySelector("#modal-close-btn").addEventListener("click", closeModal);
+    container.querySelector("#modal-delete-btn").addEventListener("click", handleDelete);
+    container.querySelector("#modal-form").addEventListener("submit", handleModalSubmit);
+
+    await loadData();
+  }
+
+  return { init, onShow: loadData };
+})();

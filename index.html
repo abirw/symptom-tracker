@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <title>Symptom Tracker</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0b1210" />
+
+  <!-- iOS home screen support -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Symptoms" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Symptom Tracker</h1>
+  </header>
+
+  <main id="view-root">
+    <section id="view-log" class="view" data-view="log"></section>
+
+    <section id="view-timeline" class="view" data-view="timeline" hidden></section>
+
+    <section id="view-trends" class="view" data-view="trends" hidden></section>
+
+    <section id="view-export" class="view" data-view="export" hidden></section>
+  </main>
+
+  <nav class="tab-bar">
+    <button class="tab-button" data-target="log" aria-current="page">Log</button>
+    <button class="tab-button" data-target="timeline">Timeline</button>
+    <button class="tab-button" data-target="trends">Trends</button>
+    <button class="tab-button" data-target="export">Export</button>
+  </nav>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/pickers.js"></script>
+  <script src="js/log.js"></script>
+  <script src="js/timeline.js"></script>
+  <script src="js/trends.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
