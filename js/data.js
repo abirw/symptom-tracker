@@ -14,6 +14,7 @@ const DataView = (() => {
   let allConditions = [];
   let pendingStructuredImport = null; // { entries, tags, conditions } awaiting confirmation
   let candidates = []; // text-extraction candidates awaiting review
+  let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
 
   // ---- Export ----
 
@@ -453,6 +454,126 @@ const DataView = (() => {
     }
   }
 
+  // ---- Manage Tags ----
+
+  async function loadTagUsage() {
+    const entries = await DB.getAllEntries();
+    const counts = {};
+    entries.forEach((e) => (e.tags || []).forEach((name) => {
+      counts[name] = (counts[name] || 0) + 1;
+    }));
+    tagUsageCounts = counts;
+  }
+
+  function renderTagManageList() {
+    const wrap = container.querySelector("#tag-manage-list");
+    wrap.innerHTML = "";
+
+    if (allTags.length === 0) {
+      const p = document.createElement("p");
+      p.className = "placeholder";
+      p.textContent = "No tags yet.";
+      wrap.appendChild(p);
+      return;
+    }
+
+    allTags
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((tag) => wrap.appendChild(buildTagManageRow(tag)));
+  }
+
+  function buildTagManageRow(tag) {
+    const row = document.createElement("div");
+    row.className = "tag-manage-row";
+
+    const info = document.createElement("div");
+    info.className = "tag-manage-info";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "tag-manage-name";
+    nameEl.textContent = tag.name;
+    info.appendChild(nameEl);
+
+    const count = tagUsageCounts[tag.name] || 0;
+    const meta = document.createElement("span");
+    meta.className = "tag-manage-meta";
+    meta.textContent = `${count} ${count === 1 ? "entry" : "entries"}`;
+    info.appendChild(meta);
+
+    row.appendChild(info);
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "tag-manage-rename-btn";
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", () => startTagRename(row, tag));
+    row.appendChild(renameBtn);
+
+    return row;
+  }
+
+  /** Swaps a tag row into an inline rename form; Enter/Save commits, Escape/Cancel reverts. */
+  function startTagRename(row, tag) {
+    row.innerHTML = "";
+    row.classList.add("tag-manage-row-editing");
+
+    const inputRow = document.createElement("div");
+    inputRow.className = "tag-manage-edit-input-row";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = tag.name;
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.textContent = "Save";
+    saveBtn.className = "tag-manage-rename-save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+
+    inputRow.append(input, saveBtn, cancelBtn);
+
+    const errorEl = document.createElement("p");
+    errorEl.className = "import-status";
+
+    row.append(inputRow, errorEl);
+    input.focus();
+    input.select();
+
+    cancelBtn.addEventListener("click", () => renderTagManageList());
+
+    async function commitRename() {
+      const newName = input.value.trim();
+      if (!newName || newName === tag.name) {
+        renderTagManageList();
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        await DB.renameTag(tag.name, newName);
+        await loadPickerData();
+        await loadTagUsage();
+        renderTagManageList();
+      } catch (err) {
+        errorEl.textContent = err.message || "Couldn't rename that tag.";
+        saveBtn.disabled = false;
+      }
+    }
+
+    saveBtn.addEventListener("click", commitRename);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitRename();
+      } else if (e.key === "Escape") {
+        renderTagManageList();
+      }
+    });
+  }
+
   // ---- Render + wiring ----
 
   function render() {
@@ -469,6 +590,13 @@ const DataView = (() => {
         JSON keeps full fidelity (entries, tags, conditions) for backup. CSV is for opening in a
         spreadsheet. Nothing leaves this device except through this deliberate export action.
       </p>
+
+      <hr class="section-divider" />
+      <h2 class="section-heading">Manage Tags</h2>
+      <p class="export-note" style="margin-top: 0">
+        Rename a tag if the wording no longer fits — every entry using it updates automatically.
+      </p>
+      <div id="tag-manage-list" class="tag-manage-list"></div>
 
       <hr class="section-divider" />
       <h2 class="section-heading">Restore a backup</h2>
@@ -525,11 +653,15 @@ const DataView = (() => {
 
     await loadExportSummary();
     await loadPickerData();
+    await loadTagUsage();
+    renderTagManageList();
   }
 
   async function onShow() {
     await loadExportSummary();
     await loadPickerData();
+    await loadTagUsage();
+    renderTagManageList();
   }
 
   return { init, onShow };

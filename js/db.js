@@ -182,6 +182,47 @@ const DB = (() => {
     return existing;
   }
 
+  /**
+   * Renames a tag and rewrites every entry that references it, in a single
+   * atomic transaction spanning both the `tags` and `entries` stores (tags
+   * are keyed by name, so a rename is really "create under the new name,
+   * delete the old one, then repoint every entry" - this must not partially
+   * apply). Uses the `tags` multiEntry index on `entries` so it only touches
+   * entries that actually reference this tag, not every entry.
+   * @param {string} oldName
+   * @param {string} newName
+   * @returns {Promise<object>} the renamed tag record
+   * @throws if `oldName` doesn't exist, or `newName` is blank/already taken
+   */
+  async function renameTag(oldName, newName) {
+    const trimmedNew = (newName || "").trim();
+    if (!trimmedNew) throw new Error("New tag name can't be blank.");
+    if (trimmedNew === oldName) return getAllTags().then((tags) => tags.find((t) => t.name === oldName));
+
+    const db = await open();
+    const transaction = db.transaction(["tags", "entries"], "readwrite");
+    const tagStore = transaction.objectStore("tags");
+    const entryStore = transaction.objectStore("entries");
+
+    const existingOld = await promisifyRequest(tagStore.get(oldName));
+    if (!existingOld) throw new Error(`Tag "${oldName}" not found.`);
+
+    const existingNew = await promisifyRequest(tagStore.get(trimmedNew));
+    if (existingNew) throw new Error(`"${trimmedNew}" is already a tag.`);
+
+    const renamed = { ...existingOld, name: trimmedNew };
+    await promisifyRequest(tagStore.add(renamed));
+    await promisifyRequest(tagStore.delete(oldName));
+
+    const affectedEntries = await promisifyRequest(entryStore.index("tags").getAll(oldName));
+    for (const entry of affectedEntries) {
+      const updated = { ...entry, tags: entry.tags.map((t) => (t === oldName ? trimmedNew : t)) };
+      await promisifyRequest(entryStore.put(updated));
+    }
+
+    return renamed;
+  }
+
   // --- Conditions ---
 
   /** Same idempotent create-if-missing pattern as touchTag, for the condition list. */
@@ -240,6 +281,7 @@ const DB = (() => {
     touchTag,
     getAllTags,
     mergeTagRecord,
+    renameTag,
     touchCondition,
     getAllConditions,
     mergeConditionRecord,

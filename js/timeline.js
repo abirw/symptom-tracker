@@ -58,6 +58,10 @@ const TimelineView = (() => {
             <div class="field">
               <label>Tags</label>
               <div id="modal-tag-chips" class="chip-row"></div>
+              <div class="add-row">
+                <input type="text" id="modal-new-tag-input" placeholder="Add tag…" autocomplete="off" />
+                <button type="button" id="modal-add-tag-btn">Add</button>
+              </div>
             </div>
             <div class="field">
               <label>Condition</label>
@@ -401,6 +405,29 @@ const TimelineView = (() => {
     );
   }
 
+  /**
+   * Creates a new tag on the fly from the modal (same pattern as the Log
+   * form), using this entry's own timestamp as the tag's firstUsed so
+   * backdating still tracks onset correctly.
+   */
+  async function handleModalAddTag() {
+    const input = container.querySelector("#modal-new-tag-input");
+    const name = input.value.trim();
+    if (!name) return;
+
+    const timestampInput = container.querySelector("#modal-timestamp-input").value;
+    const occurredAt = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+
+    const tag = await DB.touchTag(name, occurredAt);
+    if (!tags.some((t) => t.name === tag.name)) {
+      tags.push(tag);
+    }
+    editSelectedTags.add(tag.name);
+    input.value = "";
+    renderModalPickers();
+    populateFilterOptions(); // so the new tag is immediately available as a filter too
+  }
+
   /** Opens the edit modal pre-filled with `id`'s current values. */
   function openEntry(id) {
     const entry = entries.find((e) => e.id === id);
@@ -488,6 +515,13 @@ const TimelineView = (() => {
     container.querySelector("#modal-close-btn").addEventListener("click", closeModal);
     container.querySelector("#modal-delete-btn").addEventListener("click", handleDelete);
     container.querySelector("#modal-form").addEventListener("submit", handleModalSubmit);
+    container.querySelector("#modal-add-tag-btn").addEventListener("click", handleModalAddTag);
+    container.querySelector("#modal-new-tag-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleModalAddTag();
+      }
+    });
     // Tapping the dimmed backdrop (not the sheet itself) closes the modal, like a native sheet.
     modal.addEventListener("click", (e) => {
       if (e.target === modal) closeModal();
