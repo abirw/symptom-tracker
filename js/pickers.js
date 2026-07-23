@@ -1,69 +1,55 @@
 /**
- * Shared chip-picker rendering, used by the Log form and the Timeline edit
- * modal (the only two places tags/conditions/severity are picked). Each
- * render* function fully replaces its wrapper's children on every call, so
- * callers just re-invoke it after state changes rather than diffing manually.
+ * Shared chip-picker rendering, used anywhere tags/conditions/severity are
+ * picked or filtered by (the Log form, Timeline's edit modal and filter bar,
+ * the Import candidate editor, and Trends' filters). Each render* function
+ * fully replaces its wrapper's children on every call, so callers just
+ * re-invoke it after state changes rather than diffing manually.
  */
 const Pickers = (() => {
   /**
-   * Renders one toggle chip per tag. Multi-select: `selectedSet` is mutated
-   * by the caller inside `onToggle`, and the just-clicked chip's own
-   * aria-pressed is flipped immediately (no full re-render needed).
+   * Multi-select toggle chips, shared by tags and conditions (an entry can
+   * have any number of both). `selectedSet` is mutated by the caller inside
+   * `onToggle`, and the just-clicked chip's own aria-pressed is flipped
+   * immediately - no full re-render needed.
    * @param {HTMLElement} wrap - container to fill with chip buttons
-   * @param {{name: string}[]} tags
+   * @param {{name: string}[]} items
    * @param {Set<string>} selectedSet - mutated by `onToggle`, read back after
    * @param {(name: string) => void} onToggle
    */
-  function renderTagChips(wrap, tags, selectedSet, onToggle) {
+  function renderMultiSelectChips(wrap, items, selectedSet, onToggle) {
     wrap.innerHTML = "";
-    tags
+    items
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((tag) => {
+      .forEach((item) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "chip";
-        btn.textContent = tag.name;
-        btn.setAttribute("aria-pressed", selectedSet.has(tag.name) ? "true" : "false");
+        btn.textContent = item.name;
+        btn.setAttribute("aria-pressed", selectedSet.has(item.name) ? "true" : "false");
         btn.addEventListener("click", () => {
-          onToggle(tag.name);
-          btn.setAttribute("aria-pressed", selectedSet.has(tag.name) ? "true" : "false");
+          onToggle(item.name);
+          btn.setAttribute("aria-pressed", selectedSet.has(item.name) ? "true" : "false");
         });
         wrap.appendChild(btn);
       });
   }
 
-  /**
-   * Renders one toggle chip per condition. Single-select: since only one
-   * value can be selected at a time, the whole row is rebuilt after every
-   * click (via `getSelected`) rather than only touching the clicked chip.
-   * @param {HTMLElement} wrap
-   * @param {{name: string}[]} conditions
-   * @param {() => string|null} getSelected - reads the caller's current selection
-   * @param {(name: string) => void} onSelect - caller updates its own state here
-   */
-  function renderConditionChips(wrap, conditions, getSelected, onSelect) {
-    wrap.innerHTML = "";
-    conditions
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((cond) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "chip";
-        btn.textContent = cond.name;
-        btn.setAttribute("aria-pressed", getSelected() === cond.name ? "true" : "false");
-        btn.addEventListener("click", () => {
-          onSelect(cond.name);
-          renderConditionChips(wrap, conditions, getSelected, onSelect);
-        });
-        wrap.appendChild(btn);
-      });
+  /** @param {{name: string}[]} tags */
+  function renderTagChips(wrap, tags, selectedSet, onToggle) {
+    renderMultiSelectChips(wrap, tags, selectedSet, onToggle);
+  }
+
+  /** @param {{name: string}[]} conditions */
+  function renderConditionChips(wrap, conditions, selectedSet, onToggle) {
+    renderMultiSelectChips(wrap, conditions, selectedSet, onToggle);
   }
 
   /**
    * Renders the fixed 1-5 severity chip row. `data-severity` is set on each
-   * chip so CSS can color-code the selected level (green -> red).
+   * chip so CSS can color-code the selected level (green -> red). Unlike
+   * tags/conditions, severity is single-select (one value or none), so the
+   * whole row is rebuilt after every click via `getSelected`.
    * @param {HTMLElement} wrap
    * @param {() => number|null} getSelected
    * @param {(value: number) => void} onSelect

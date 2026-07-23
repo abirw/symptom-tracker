@@ -7,7 +7,7 @@
  */
 const DB = (() => {
   const DB_NAME = "symptom-tracker";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
 
   let dbPromise = null;
 
@@ -25,20 +25,43 @@ const DB = (() => {
 
       req.onupgradeneeded = (event) => {
         const db = event.target.result;
+        const transaction = event.target.transaction;
 
-        if (!db.objectStoreNames.contains("entries")) {
+        if (event.oldVersion < 1) {
           const entries = db.createObjectStore("entries", { keyPath: "id" });
           entries.createIndex("timestamp", "timestamp");
           entries.createIndex("tags", "tags", { multiEntry: true });
-          entries.createIndex("condition", "condition");
-        }
+          entries.createIndex("conditions", "conditions", { multiEntry: true });
 
-        if (!db.objectStoreNames.contains("tags")) {
           db.createObjectStore("tags", { keyPath: "name" });
+          db.createObjectStore("conditions", { keyPath: "name" });
         }
 
-        if (!db.objectStoreNames.contains("conditions")) {
-          db.createObjectStore("conditions", { keyPath: "name" });
+        if (event.oldVersion < 2) {
+          // v1 -> v2: an entry's `condition` (single string) becomes
+          // `conditions` (an array) - an entry can belong to more than one
+          // consultant/condition. Swap the single-value index for a
+          // multiEntry one (mirroring `tags`), then rewrite every existing
+          // entry in place so nothing is ever silently dropped.
+          const entries = transaction.objectStore("entries");
+          if (entries.indexNames.contains("condition")) {
+            entries.deleteIndex("condition");
+          }
+          if (!entries.indexNames.contains("conditions")) {
+            entries.createIndex("conditions", "conditions", { multiEntry: true });
+          }
+
+          entries.openCursor().onsuccess = (cursorEvent) => {
+            const cursor = cursorEvent.target.result;
+            if (!cursor) return;
+            const record = cursor.value;
+            if (!Array.isArray(record.conditions)) {
+              record.conditions = record.condition ? [record.condition] : [];
+              delete record.condition;
+              cursor.update(record);
+            }
+            cursor.continue();
+          };
         }
       };
 
@@ -78,7 +101,7 @@ const DB = (() => {
   /**
    * Inserts a new entry, filling in any field the caller omitted (id,
    * timestamp) with sensible defaults.
-   * @param {{id?: string, timestamp?: string, tags?: string[], condition?: string|null, severity?: number|null, note?: string}} entry
+   * @param {{id?: string, timestamp?: string, tags?: string[], conditions?: string[], severity?: number|null, note?: string}} entry
    * @returns {Promise<object>} the full record as stored
    */
   async function addEntry(entry) {
@@ -86,7 +109,7 @@ const DB = (() => {
       id: entry.id || uuid(),
       timestamp: entry.timestamp || new Date().toISOString(),
       tags: entry.tags || [],
-      condition: entry.condition || null,
+      conditions: entry.conditions || [],
       severity: entry.severity ?? null,
       note: entry.note || "",
     };

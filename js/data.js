@@ -32,12 +32,12 @@ const DataView = (() => {
   }
 
   function toCsv(entries) {
-    const header = ["id", "timestamp", "tags", "condition", "severity", "note"];
+    const header = ["id", "timestamp", "tags", "conditions", "severity", "note"];
     const rows = entries.map((e) => [
       e.id,
       e.timestamp,
       (e.tags || []).join("; "),
-      e.condition || "",
+      (e.conditions || []).join("; "),
       e.severity ?? "",
       e.note || "",
     ]);
@@ -184,8 +184,8 @@ const DataView = (() => {
         for (const name of e.tags || []) {
           await DB.touchTag(name, e.timestamp);
         }
-        if (e.condition) {
-          await DB.touchCondition(e.condition, e.timestamp);
+        for (const name of e.conditions || []) {
+          await DB.touchCondition(name, e.timestamp);
         }
         await DB.updateEntry({ ...e, id: e.id || DB.uuid() });
       }
@@ -230,7 +230,7 @@ const DataView = (() => {
         expanded: false,
         timestamp: c.timestamp,
         tags: new Set(c.tags),
-        condition: c.condition,
+        conditions: new Set(c.conditions),
         severity: c.severity,
         note: c.note,
       }));
@@ -264,19 +264,15 @@ const DataView = (() => {
     const condField = document.createElement("div");
     condField.className = "field";
     const condLabel = document.createElement("label");
-    condLabel.textContent = "Condition";
+    condLabel.textContent = "Conditions";
     const condChips = document.createElement("div");
     condChips.className = "chip-row";
     condField.append(condLabel, condChips);
     wrap.appendChild(condField);
-    Pickers.renderConditionChips(
-      condChips,
-      allConditions,
-      () => cand.condition,
-      (name) => {
-        cand.condition = cand.condition === name ? null : name;
-      }
-    );
+    Pickers.renderConditionChips(condChips, allConditions, cand.conditions, (name) => {
+      if (cand.conditions.has(name)) cand.conditions.delete(name);
+      else cand.conditions.add(name);
+    });
 
     const sevField = document.createElement("div");
     sevField.className = "field";
@@ -372,7 +368,7 @@ const DataView = (() => {
       return card;
     }
 
-    if (cand.tags.size > 0 || cand.condition) {
+    if (cand.tags.size > 0 || cand.conditions.size > 0) {
       const tagRow = document.createElement("div");
       tagRow.className = "timeline-item-tags";
       cand.tags.forEach((name) => {
@@ -381,12 +377,12 @@ const DataView = (() => {
         chip.textContent = name;
         tagRow.appendChild(chip);
       });
-      if (cand.condition) {
+      cand.conditions.forEach((name) => {
         const condChip = document.createElement("span");
         condChip.className = "chip chip-static chip-condition";
-        condChip.textContent = cand.condition;
+        condChip.textContent = name;
         tagRow.appendChild(condChip);
-      }
+      });
       card.appendChild(tagRow);
     }
 
@@ -428,13 +424,13 @@ const DataView = (() => {
         for (const name of c.tags) {
           await DB.touchTag(name, timestamp);
         }
-        if (c.condition) {
-          await DB.touchCondition(c.condition, timestamp);
+        for (const name of c.conditions) {
+          await DB.touchCondition(name, timestamp);
         }
         await DB.addEntry({
           timestamp,
           tags: Array.from(c.tags),
-          condition: c.condition,
+          conditions: Array.from(c.conditions),
           severity: c.severity,
           note: c.note,
         });

@@ -1,13 +1,14 @@
 /**
  * Log Entry screen: the fast-path form for recording a new symptom entry.
- * Tags/condition are picked from existing chips or typed fresh (created
- * on-the-fly via DB.touchTag/touchCondition); every field except tags is
- * optional per SPEC.md ("never require every field").
+ * Tags/conditions are picked from existing chips or typed fresh (created
+ * on-the-fly via DB.touchTag/touchCondition) - an entry can have any number
+ * of each. Every field except tags is optional per SPEC.md ("never require
+ * every field").
  */
 const LogView = (() => {
   let container;
   let selectedTags = new Set();
-  let selectedCondition = null;
+  let selectedConditions = new Set();
   let selectedSeverity = null;
   let allTags = [];
   let allConditions = [];
@@ -66,14 +67,13 @@ const LogView = (() => {
   }
 
   function renderConditionChips() {
-    Pickers.renderConditionChips(
-      container.querySelector("#condition-chips"),
-      allConditions,
-      () => selectedCondition,
-      (name) => {
-        selectedCondition = selectedCondition === name ? null : name;
+    Pickers.renderConditionChips(container.querySelector("#condition-chips"), allConditions, selectedConditions, (name) => {
+      if (selectedConditions.has(name)) {
+        selectedConditions.delete(name);
+      } else {
+        selectedConditions.add(name);
       }
-    );
+    });
   }
 
   function renderSeverity() {
@@ -91,7 +91,7 @@ const LogView = (() => {
   /** Clears the form back to its just-opened state after a successful save. */
   function resetForm() {
     selectedTags = new Set();
-    selectedCondition = null;
+    selectedConditions = new Set();
     selectedSeverity = null;
     container.querySelector("#note-input").value = "";
     container.querySelector("#timestamp-input").value = DateUtils.nowForInput();
@@ -121,7 +121,7 @@ const LogView = (() => {
     if (!allConditions.some((c) => c.name === cond.name)) {
       allConditions.push(cond);
     }
-    selectedCondition = cond.name;
+    selectedConditions.add(cond.name);
     input.value = "";
     renderConditionChips();
   }
@@ -143,14 +143,14 @@ const LogView = (() => {
       for (const name of selectedTags) {
         await DB.touchTag(name, timestamp);
       }
-      if (selectedCondition) {
-        await DB.touchCondition(selectedCondition, timestamp);
+      for (const name of selectedConditions) {
+        await DB.touchCondition(name, timestamp);
       }
 
       await DB.addEntry({
         timestamp,
         tags: Array.from(selectedTags),
-        condition: selectedCondition,
+        conditions: Array.from(selectedConditions),
         severity: selectedSeverity,
         note,
       });

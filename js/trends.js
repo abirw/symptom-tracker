@@ -1,14 +1,24 @@
 /**
- * Trends view: per-tag frequency and severity charts (Chart.js). The one
- * requirement this view has to get right per SPEC.md: a tag's chart must
- * never render before that tag's actual `firstUsed` date, or a long-standing
- * symptom you only recently started logging would look like sudden onset.
+ * Trends view: frequency and severity charts (Chart.js), filterable by
+ * symptom (tag) and condition. The one requirement this view has to get
+ * right per SPEC.md: a tag's chart must never render before that tag's
+ * actual `firstUsed` date, or a long-standing symptom you only recently
+ * started logging would look like sudden onset.
+ *
+ * Selecting 0 or 1 symptom keeps the original single-series view (bar chart
+ * for frequency, line for severity). Selecting 2+ symptoms switches to
+ * compare mode: both charts become multi-series line charts sharing one
+ * x-axis, but each symptom's own line stays null (not drawn) before that
+ * symptom's own firstUsed date - so comparing an old symptom against a
+ * newly-tracked one never implies the newer one appeared out of nowhere.
  */
 const TrendsView = (() => {
   let container;
   let entries = [];
   let tags = [];
-  let selectedTag = "all";
+  let conditions = [];
+  let selectedTagNames = new Set();
+  let selectedConditionNames = new Set();
   let selectedRange = "90";
   let freqChart = null;
   let sevChart = null;
@@ -20,15 +30,26 @@ const TrendsView = (() => {
     { value: "all", label: "All time" },
   ];
 
+  // Cycled through by index for compare-mode series; index 0/1 intentionally
+  // match the original single-series frequency (teal) / severity (red) colors.
+  const SERIES_COLORS = ["#2fb8a1", "#e0665a", "#e0b84a", "#7aa6e0", "#c07ae0", "#8bbf4f", "#e08a45", "#5ad1c7"];
+
   function render() {
     container.innerHTML = `
+      <div class="field">
+        <label>Symptoms</label>
+        <div id="trends-tag-chips" class="chip-row"></div>
+      </div>
+      <div class="field">
+        <label>Condition</label>
+        <div id="trends-condition-chips" class="chip-row"></div>
+      </div>
       <div class="filter-bar">
-        <select id="trends-tag"></select>
         <select id="trends-range">
           ${RANGE_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
         </select>
       </div>
-      <p id="trends-tracking-note" class="tracking-note" hidden></p>
+      <div id="trends-tracking-note" class="tracking-note" hidden></div>
       <p id="trends-empty" class="placeholder" hidden></p>
       <div class="chart-card">
         <h3>Frequency</h3>
@@ -41,29 +62,33 @@ const TrendsView = (() => {
     `;
   }
 
-  function populateTagSelect() {
-    const select = container.querySelector("#trends-tag");
-    select.innerHTML = "";
+  /** Renders the tag/condition filter chips, dropping any prior selection that no longer exists. */
+  function populateFilterChips() {
+    const tagNames = new Set(tags.map((t) => t.name));
+    selectedTagNames.forEach((name) => {
+      if (!tagNames.has(name)) selectedTagNames.delete(name);
+    });
+    const conditionNames = new Set(conditions.map((c) => c.name));
+    selectedConditionNames.forEach((name) => {
+      if (!conditionNames.has(name)) selectedConditionNames.delete(name);
+    });
 
-    const allOpt = document.createElement("option");
-    allOpt.value = "all";
-    allOpt.textContent = "All tags";
-    select.appendChild(allOpt);
-
-    tags
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((t) => {
-        const opt = document.createElement("option");
-        opt.value = t.name;
-        opt.textContent = t.name;
-        select.appendChild(opt);
-      });
-
-    if (selectedTag !== "all" && !tags.some((t) => t.name === selectedTag)) {
-      selectedTag = "all"; // the previously-selected tag was deleted/renamed elsewhere
-    }
-    select.value = selectedTag;
+    Pickers.renderTagChips(container.querySelector("#trends-tag-chips"), tags, selectedTagNames, (name) => {
+      if (selectedTagNames.has(name)) {
+        selectedTagNames.delete(name);
+      } else {
+        selectedTagNames.add(name);
+      }
+      renderCharts();
+    });
+    Pickers.renderConditionChips(container.querySelector("#trends-condition-chips"), conditions, selectedConditionNames, (name) => {
+      if (selectedConditionNames.has(name)) {
+        selectedConditionNames.delete(name);
+      } else {
+        selectedConditionNames.add(name);
+      }
+      renderCharts();
+    });
   }
 
   // --- Bucketing helpers ---
@@ -117,14 +142,21 @@ const TrendsView = (() => {
 
   // --- Data window ---
 
+  /** Entries matching the condition filter (if any); the tag/date filtering happens per-series on top of this. */
+  function conditionFilteredPool() {
+    if (selectedConditionNames.size === 0) return entries;
+    return entries.filter((e) => (e.conditions || []).some((c) => selectedConditionNames.has(c)));
+  }
+
   /**
-   * Resolves the actual [start, end] window to chart, given the selected tag
-   * and date-range filter. The critical rule lives here: when a specific tag
-   * is selected, `start` is clamped to that tag's firstUsed date no matter
-   * how far back the range filter would otherwise reach.
+   * Resolves the effective [start, end] window for one symptom (or `null`
+   * for "all symptoms"). The critical rule lives here: when a specific tag
+   * is given, `start` is clamped to that tag's firstUsed date no matter how
+   * far back the range filter would otherwise reach.
+   * @param {string|null} tagName
    * @returns {{start: Date, end: Date, tagFirstUsed: Date|null}}
    */
-  function getEffectiveWindow() {
+  function computeWindow(tagName) {
     const now = new Date();
     let rangeStart = null;
     if (selectedRange !== "all") {
@@ -133,8 +165,8 @@ const TrendsView = (() => {
     }
 
     let tagFirstUsed = null;
-    if (selectedTag !== "all") {
-      const tag = tags.find((t) => t.name === selectedTag);
+    if (tagName) {
+      const tag = tags.find((t) => t.name === tagName);
       tagFirstUsed = tag ? new Date(tag.firstUsed) : null;
     }
 
@@ -146,24 +178,16 @@ const TrendsView = (() => {
     } else if (rangeStart) {
       start = rangeStart;
     } else {
-      // "All tags" + "all time": fall back to the earliest entry ever logged.
+      // "All symptoms" + "all time": fall back to the earliest matching entry ever logged.
+      const pool = conditionFilteredPool();
       start =
-        entries.reduce((min, e) => {
+        pool.reduce((min, e) => {
           const t = new Date(e.timestamp);
           return !min || t < min ? t : min;
         }, null) || now;
     }
 
     return { start, end: now, tagFirstUsed };
-  }
-
-  function relevantEntries(start, end) {
-    return entries.filter((e) => {
-      const t = new Date(e.timestamp);
-      if (t < start || t > end) return false;
-      if (selectedTag !== "all" && !(e.tags || []).includes(selectedTag)) return false;
-      return true;
-    });
   }
 
   function destroyCharts() {
@@ -177,7 +201,7 @@ const TrendsView = (() => {
     }
   }
 
-  function chartOptions({ beginAtZero, max, stepSize }) {
+  function chartOptions({ beginAtZero, max, stepSize }, showLegend) {
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -191,20 +215,16 @@ const TrendsView = (() => {
         },
       },
       plugins: {
-        legend: { display: false },
+        legend: { display: showLegend, labels: { color: "#9fb0ac", boxWidth: 12, font: { size: 11 } } },
       },
     };
   }
 
-  /** Recomputes the effective window/buckets and (re)draws both charts from scratch. */
-  function renderCharts() {
-    const { start, end, tagFirstUsed } = getEffectiveWindow();
+  /** 0 or 1 symptom selected: the original single-series view (bar + line). */
+  function renderSingleMode(pool, tagName, noteEl, emptyEl) {
+    const { start, end, tagFirstUsed } = computeWindow(tagName);
 
-    const noteEl = container.querySelector("#trends-tracking-note");
-    const emptyEl = container.querySelector("#trends-empty");
-    const freqCard = container.querySelector("#freq-chart").closest(".chart-card");
-    const sevCard = container.querySelector("#sev-chart").closest(".chart-card");
-
+    noteEl.innerHTML = "";
     if (tagFirstUsed) {
       noteEl.hidden = false;
       noteEl.textContent = `Tracking started ${formatDate(
@@ -214,25 +234,15 @@ const TrendsView = (() => {
       noteEl.hidden = true;
     }
 
-    // Chart.js throws if you construct a new Chart on a canvas that already has one attached.
-    destroyCharts();
+    const filtered = pool.filter((e) => {
+      const t = new Date(e.timestamp);
+      if (t < start || t > end) return false;
+      if (tagName && !(e.tags || []).includes(tagName)) return false;
+      return true;
+    });
 
-    if (entries.length === 0) {
-      emptyEl.hidden = false;
-      emptyEl.textContent = "No entries yet — log a few to see trends.";
-      freqCard.hidden = true;
-      sevCard.hidden = true;
-      return;
-    }
-
-    freqCard.hidden = false;
-    sevCard.hidden = false;
-
-    const filtered = relevantEntries(start, end);
     emptyEl.hidden = filtered.length !== 0;
-    if (filtered.length === 0) {
-      emptyEl.textContent = "No entries in this range.";
-    }
+    if (filtered.length === 0) emptyEl.textContent = "No entries in this range.";
 
     const granularity = chooseGranularity(start, end);
     const buckets = buildBuckets(start, end, granularity);
@@ -263,14 +273,14 @@ const TrendsView = (() => {
         labels,
         datasets: [
           {
-            label: selectedTag === "all" ? "All tags" : selectedTag,
+            label: tagName || "All symptoms",
             data: freqCounts,
-            backgroundColor: "#2fb8a1",
+            backgroundColor: SERIES_COLORS[0],
             borderRadius: 4,
           },
         ],
       },
-      options: chartOptions({ beginAtZero: true, stepSize: 1 }),
+      options: chartOptions({ beginAtZero: true, stepSize: 1 }, false),
     });
 
     sevChart = new Chart(container.querySelector("#sev-chart").getContext("2d"), {
@@ -281,21 +291,137 @@ const TrendsView = (() => {
           {
             label: "Avg severity",
             data: sevAverages,
-            borderColor: "#e0665a",
-            backgroundColor: "#e0665a",
+            borderColor: SERIES_COLORS[1],
+            backgroundColor: SERIES_COLORS[1],
             spanGaps: false,
             tension: 0.25,
             pointRadius: 3,
           },
         ],
       },
-      options: chartOptions({ beginAtZero: true, max: 5, stepSize: 1 }),
+      options: chartOptions({ beginAtZero: true, max: 5, stepSize: 1 }, false),
     });
   }
 
+  /** 2+ symptoms selected: one line per symptom, sharing an x-axis but each independently clipped to its own firstUsed. */
+  function renderCompareMode(pool, tagNames, noteEl, emptyEl) {
+    const now = new Date();
+    const windows = tagNames.map((name) => ({ name, ...computeWindow(name) }));
+    const sharedStart = windows.reduce((min, w) => (!min || w.start < min ? w.start : min), null);
+
+    noteEl.hidden = false;
+    noteEl.innerHTML = "";
+    const intro = document.createElement("span");
+    intro.textContent = "Tracking started — ";
+    noteEl.appendChild(intro);
+    windows.forEach((w, i) => {
+      if (i > 0) noteEl.appendChild(document.createTextNode(" · "));
+      const span = document.createElement("span");
+      span.textContent = `${w.name}: ${formatDate(w.tagFirstUsed || w.start)}`;
+      noteEl.appendChild(span);
+    });
+
+    const granularity = chooseGranularity(sharedStart, now);
+    const buckets = buildBuckets(sharedStart, now, granularity);
+    const labels = buckets.map((b) => formatBucketLabel(b, granularity));
+
+    let anyData = false;
+
+    const perTag = windows.map((w, i) => {
+      const filtered = pool.filter((e) => {
+        const t = new Date(e.timestamp);
+        return t >= w.start && t <= now && (e.tags || []).includes(w.name);
+      });
+      if (filtered.length > 0) anyData = true;
+
+      const counts = buckets.map(() => 0);
+      const sums = buckets.map(() => 0);
+      const sevCounts = buckets.map(() => 0);
+      filtered.forEach((e) => {
+        const t = new Date(e.timestamp);
+        const key = granularity === "week" ? bucketKeyWeek(t) : bucketKeyMonth(t);
+        const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
+        if (idx === -1) return;
+        counts[idx]++;
+        if (e.severity != null) {
+          sums[idx] += e.severity;
+          sevCounts[idx]++;
+        }
+      });
+
+      // Null out any bucket before the one containing this symptom's own
+      // window start, so its line simply doesn't appear yet rather than
+      // showing a false flat zero. Compared as bucket keys, not raw
+      // instants - w.start almost never falls exactly on a bucket boundary,
+      // so comparing it directly against each bucket's start would wrongly
+      // null out the whole bucket it actually starts in, discarding real
+      // entries logged later that same week/month.
+      const wStartKey = granularity === "week" ? bucketKeyWeek(w.start) : bucketKeyMonth(w.start);
+      const freqData = buckets.map((b, idx) => (b.getTime() < wStartKey.getTime() ? null : counts[idx]));
+      const sevData = buckets.map((b, idx) => {
+        if (b.getTime() < wStartKey.getTime()) return null;
+        return sevCounts[idx] ? +(sums[idx] / sevCounts[idx]).toFixed(2) : null;
+      });
+
+      const color = SERIES_COLORS[i % SERIES_COLORS.length];
+      const shared = { borderColor: color, backgroundColor: color, spanGaps: false, tension: 0.25, pointRadius: 2 };
+      return {
+        freqDataset: { label: w.name, data: freqData, ...shared },
+        sevDataset: { label: w.name, data: sevData, ...shared },
+      };
+    });
+
+    emptyEl.hidden = anyData;
+    if (!anyData) emptyEl.textContent = "No entries in this range.";
+
+    freqChart = new Chart(container.querySelector("#freq-chart").getContext("2d"), {
+      type: "line",
+      data: { labels, datasets: perTag.map((t) => t.freqDataset) },
+      options: chartOptions({ beginAtZero: true, stepSize: 1 }, true),
+    });
+
+    sevChart = new Chart(container.querySelector("#sev-chart").getContext("2d"), {
+      type: "line",
+      data: { labels, datasets: perTag.map((t) => t.sevDataset) },
+      options: chartOptions({ beginAtZero: true, max: 5, stepSize: 1 }, true),
+    });
+  }
+
+  /** Recomputes the effective window(s)/buckets and (re)draws both charts from scratch. */
+  function renderCharts() {
+    const noteEl = container.querySelector("#trends-tracking-note");
+    const emptyEl = container.querySelector("#trends-empty");
+    const freqCard = container.querySelector("#freq-chart").closest(".chart-card");
+    const sevCard = container.querySelector("#sev-chart").closest(".chart-card");
+
+    // Chart.js throws if you construct a new Chart on a canvas that already has one attached.
+    destroyCharts();
+
+    if (entries.length === 0) {
+      noteEl.hidden = true;
+      emptyEl.hidden = false;
+      emptyEl.textContent = "No entries yet — log a few to see trends.";
+      freqCard.hidden = true;
+      sevCard.hidden = true;
+      return;
+    }
+
+    freqCard.hidden = false;
+    sevCard.hidden = false;
+
+    const pool = conditionFilteredPool();
+    const selected = Array.from(selectedTagNames);
+
+    if (selected.length >= 2) {
+      renderCompareMode(pool, selected, noteEl, emptyEl);
+    } else {
+      renderSingleMode(pool, selected[0] || null, noteEl, emptyEl);
+    }
+  }
+
   async function loadData() {
-    [entries, tags] = await Promise.all([DB.getAllEntries(), DB.getAllTags()]);
-    populateTagSelect();
+    [entries, tags, conditions] = await Promise.all([DB.getAllEntries(), DB.getAllTags(), DB.getAllConditions()]);
+    populateFilterChips();
     renderCharts();
   }
 
@@ -304,11 +430,6 @@ const TrendsView = (() => {
     render();
 
     container.querySelector("#trends-range").value = selectedRange;
-
-    container.querySelector("#trends-tag").addEventListener("change", (e) => {
-      selectedTag = e.target.value;
-      renderCharts();
-    });
     container.querySelector("#trends-range").addEventListener("change", (e) => {
       selectedRange = e.target.value;
       renderCharts();

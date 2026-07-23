@@ -5,8 +5,9 @@
  *
  *  - parseJsonBackup: this app's own JSON export format (full fidelity).
  *  - csvToEntries: this app's own CSV export format (id/timestamp/tags/
- *    condition/severity/note columns), also tolerant of a hand-made CSV
- *    that only has some of those columns.
+ *    conditions/severity/note columns, "conditions" falling back to a
+ *    singular "condition" column from an older export), also tolerant of
+ *    a hand-made CSV that only has some of those columns.
  *  - parseTextToCandidates: a local heuristic over a plain-text journal.
  *    No AI/network involved by design (see SPEC.md's local-first
  *    principle) - it only recognizes tags/conditions you've already
@@ -15,6 +16,13 @@
  */
 const Importer = (() => {
   // ---- JSON backup (mirrors export.js's exportJson payload shape) ----
+
+  /** Normalizes a possibly-old-shape entry (single `condition` string) to the current `conditions` array shape. */
+  function normalizeEntryConditions(entry) {
+    if (Array.isArray(entry.conditions)) return entry;
+    const { condition, ...rest } = entry;
+    return { ...rest, conditions: condition ? [condition] : [] };
+  }
 
   /**
    * @param {string} text - raw file contents
@@ -27,7 +35,9 @@ const Importer = (() => {
       throw new Error("This doesn't look like a Symptom Tracker JSON export.");
     }
     return {
-      entries: data.entries,
+      // Older exports (before an entry could have multiple conditions) used
+      // a single `condition` string - normalize those on the way in.
+      entries: data.entries.map(normalizeEntryConditions),
       tags: Array.isArray(data.tags) ? data.tags : [],
       conditions: Array.isArray(data.conditions) ? data.conditions : [],
     };
@@ -80,7 +90,8 @@ const Importer = (() => {
     return rows.filter((r) => r.some((cell) => cell.trim() !== ""));
   }
 
-  function splitTags(cell) {
+  /** Splits a semicolon- or comma-separated cell into trimmed, non-empty values (used for tags and conditions alike). */
+  function splitMultiValue(cell) {
     if (!cell) return [];
     return cell
       .split(/;|,/)
@@ -102,7 +113,9 @@ const Importer = (() => {
     const idCol = col("id");
     const tsCol = col("timestamp");
     const tagsCol = col("tags");
-    const condCol = col("condition");
+    // "conditions" is the current column name; "condition" (singular) is
+    // read too so a CSV exported before multi-condition support still imports.
+    const condCol = col("conditions") !== -1 ? col("conditions") : col("condition");
     const sevCol = col("severity");
     const noteCol = col("note");
 
@@ -122,8 +135,8 @@ const Importer = (() => {
         return {
           id: idCol !== -1 && r[idCol] ? r[idCol].trim() : null,
           timestamp: parsedDate.toISOString(),
-          tags: tagsCol !== -1 ? splitTags(r[tagsCol]) : [],
-          condition: condCol !== -1 && r[condCol] ? r[condCol].trim() : null,
+          tags: tagsCol !== -1 ? splitMultiValue(r[tagsCol]) : [],
+          conditions: condCol !== -1 ? splitMultiValue(r[condCol]) : [],
           severity,
           note: noteCol !== -1 ? r[noteCol] || "" : "",
         };
@@ -208,16 +221,16 @@ const Importer = (() => {
     return tagNames.filter((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`, "i").test(text));
   }
 
-  /** The first existing condition name that appears in `text` (conditions are single-select). */
-  function guessCondition(text, conditionNames) {
-    return conditionNames.find((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`, "i").test(text)) || null;
+  /** Every existing condition name that appears (whole-word, case-insensitive) in `text`. */
+  function guessConditions(text, conditionNames) {
+    return conditionNames.filter((name) => new RegExp(`\\b${escapeRegExp(name)}\\b`, "i").test(text));
   }
 
   function buildCandidate(noteText, date, tagNames, conditionNames) {
     return {
       timestamp: date ? date.toISOString() : null,
       tags: guessTags(noteText, tagNames),
-      condition: guessCondition(noteText, conditionNames),
+      conditions: guessConditions(noteText, conditionNames),
       severity: guessSeverity(noteText),
       note: noteText,
     };
@@ -233,7 +246,7 @@ const Importer = (() => {
    * @param {string[]} tagNames - existing tag names to match against
    * @param {string[]} conditionNames - existing condition names to match against
    * @param {Date} [now]
-   * @returns {object[]} candidates: {timestamp: string|null, tags: string[], condition: string|null, severity: number|null, note: string}
+   * @returns {object[]} candidates: {timestamp: string|null, tags: string[], conditions: string[], severity: number|null, note: string}
    */
   function parseTextToCandidates(text, tagNames, conditionNames, now = new Date()) {
     const lines = text.split(/\r\n|\r|\n/);
@@ -263,7 +276,7 @@ const Importer = (() => {
 
     return blocks
       .map((b) => buildCandidate(b.lines.join("\n").trim(), b.date, tagNames, conditionNames))
-      .filter((c) => c.note || c.tags.length || c.severity != null);
+      .filter((c) => c.note || c.tags.length || c.conditions.length || c.severity != null);
   }
 
   return { parseJsonBackup, csvToEntries, parseTextToCandidates };

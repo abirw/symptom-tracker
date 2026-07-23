@@ -17,7 +17,7 @@ const TimelineView = (() => {
 
   let editingEntry = null;
   let editSelectedTags = new Set();
-  let editSelectedCondition = null;
+  let editSelectedConditions = new Set();
   let editSelectedSeverity = null;
 
   function render() {
@@ -64,8 +64,12 @@ const TimelineView = (() => {
               </div>
             </div>
             <div class="field">
-              <label>Condition</label>
+              <label>Conditions</label>
               <div id="modal-condition-chips" class="chip-row"></div>
+              <div class="add-row">
+                <input type="text" id="modal-new-condition-input" placeholder="Add condition…" autocomplete="off" />
+                <button type="button" id="modal-add-condition-btn">Add</button>
+              </div>
             </div>
             <div class="field">
               <label>Severity</label>
@@ -129,7 +133,7 @@ const TimelineView = (() => {
   function getTagConditionFiltered() {
     return entries
       .filter((e) => !filterTag || e.tags.includes(filterTag))
-      .filter((e) => !filterCondition || e.condition === filterCondition);
+      .filter((e) => !filterCondition || (e.conditions || []).includes(filterCondition));
   }
 
   /** Same as above, plus the heatmap day filter if one's selected — this is what the list shows. */
@@ -342,7 +346,7 @@ const TimelineView = (() => {
 
       item.appendChild(header);
 
-      if ((entry.tags && entry.tags.length) || entry.condition) {
+      if ((entry.tags && entry.tags.length) || (entry.conditions && entry.conditions.length)) {
         const tagRow = document.createElement("div");
         tagRow.className = "timeline-item-tags";
         (entry.tags || []).forEach((name) => {
@@ -351,12 +355,12 @@ const TimelineView = (() => {
           chip.textContent = name;
           tagRow.appendChild(chip);
         });
-        if (entry.condition) {
+        (entry.conditions || []).forEach((name) => {
           const condChip = document.createElement("span");
           condChip.className = "chip chip-static chip-condition";
-          condChip.textContent = entry.condition;
+          condChip.textContent = name;
           tagRow.appendChild(condChip);
-        }
+        });
         item.appendChild(tagRow);
       }
 
@@ -388,14 +392,13 @@ const TimelineView = (() => {
         editSelectedTags.add(name);
       }
     });
-    Pickers.renderConditionChips(
-      container.querySelector("#modal-condition-chips"),
-      conditions,
-      () => editSelectedCondition,
-      (name) => {
-        editSelectedCondition = editSelectedCondition === name ? null : name;
+    Pickers.renderConditionChips(container.querySelector("#modal-condition-chips"), conditions, editSelectedConditions, (name) => {
+      if (editSelectedConditions.has(name)) {
+        editSelectedConditions.delete(name);
+      } else {
+        editSelectedConditions.add(name);
       }
-    );
+    });
     Pickers.renderSeverity(
       container.querySelector("#modal-severity-row"),
       () => editSelectedSeverity,
@@ -428,6 +431,25 @@ const TimelineView = (() => {
     populateFilterOptions(); // so the new tag is immediately available as a filter too
   }
 
+  /** Same as handleModalAddTag, for conditions. */
+  async function handleModalAddCondition() {
+    const input = container.querySelector("#modal-new-condition-input");
+    const name = input.value.trim();
+    if (!name) return;
+
+    const timestampInput = container.querySelector("#modal-timestamp-input").value;
+    const occurredAt = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+
+    const cond = await DB.touchCondition(name, occurredAt);
+    if (!conditions.some((c) => c.name === cond.name)) {
+      conditions.push(cond);
+    }
+    editSelectedConditions.add(cond.name);
+    input.value = "";
+    renderModalPickers();
+    populateFilterOptions();
+  }
+
   /** Opens the edit modal pre-filled with `id`'s current values. */
   function openEntry(id) {
     const entry = entries.find((e) => e.id === id);
@@ -435,7 +457,7 @@ const TimelineView = (() => {
 
     editingEntry = entry;
     editSelectedTags = new Set(entry.tags || []);
-    editSelectedCondition = entry.condition || null;
+    editSelectedConditions = new Set(entry.conditions || []);
     editSelectedSeverity = entry.severity ?? null;
 
     container.querySelector("#modal-note-input").value = entry.note || "";
@@ -462,11 +484,20 @@ const TimelineView = (() => {
       const timestampInput = container.querySelector("#modal-timestamp-input").value;
       const timestamp = timestampInput ? new Date(timestampInput).toISOString() : editingEntry.timestamp;
 
+      // Corrects firstUsed/createdAt backwards if the timestamp was edited to
+      // something earlier than a selected tag/condition's known start.
+      for (const name of editSelectedTags) {
+        await DB.touchTag(name, timestamp);
+      }
+      for (const name of editSelectedConditions) {
+        await DB.touchCondition(name, timestamp);
+      }
+
       const updated = {
         ...editingEntry,
         timestamp,
         tags: Array.from(editSelectedTags),
-        condition: editSelectedCondition,
+        conditions: Array.from(editSelectedConditions),
         severity: editSelectedSeverity,
         note,
       };
@@ -520,6 +551,13 @@ const TimelineView = (() => {
       if (e.key === "Enter") {
         e.preventDefault();
         handleModalAddTag();
+      }
+    });
+    container.querySelector("#modal-add-condition-btn").addEventListener("click", handleModalAddCondition);
+    container.querySelector("#modal-new-condition-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleModalAddCondition();
       }
     });
     // Tapping the dimmed backdrop (not the sheet itself) closes the modal, like a native sheet.
