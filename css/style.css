@@ -44,6 +44,10 @@ body {
 /* --- Layout shell --- */
 
 .app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   padding: calc(var(--safe-top) + 0.75rem) 1rem 0.75rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -53,6 +57,22 @@ body {
   margin: 0;
   font-size: 1.1rem;
   font-weight: 600;
+}
+
+.settings-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.settings-btn .tab-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .error-banner {
@@ -322,6 +342,63 @@ textarea {
   color: var(--accent);
   font-weight: 600;
   margin-top: 0.75rem;
+}
+
+/* --- Log: smart tag picker (search + suggestions mode) --- */
+
+.tag-suggested-wrap {
+  margin: 0.5rem 0;
+}
+
+.tag-suggested-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  margin-bottom: 0.3rem;
+}
+
+.tag-search-wrap {
+  position: relative;
+  margin-top: 0.5rem;
+}
+
+.tag-search-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 5;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.tag-search-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.6rem 0.85rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.tag-search-result:last-child {
+  border-bottom: none;
+}
+
+.tag-search-create {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* --- Timeline: filters, heatmap, entry list --- */
@@ -597,6 +674,11 @@ textarea {
 .modal-header h2 {
   margin: 0;
   font-size: 1rem;
+}
+
+/* Balances a header that only has a Close button (no symmetric right-side action). */
+.modal-header-spacer {
+  min-width: 3.5rem;
 }
 
 .modal-header-btn {

@@ -15,34 +15,34 @@ const Pickers = (() => {
    * @param {{name: string}[]} items
    * @param {Set<string>} selectedSet - mutated by `onToggle`, read back after
    * @param {(name: string) => void} onToggle
+   * @param {{sort?: boolean}} [opts] - sort: false preserves `items`' given
+   *   order (e.g. a ranked suggestion list) instead of alphabetizing it
    */
-  function renderMultiSelectChips(wrap, items, selectedSet, onToggle) {
+  function renderMultiSelectChips(wrap, items, selectedSet, onToggle, opts = {}) {
+    const sort = opts.sort !== false;
     wrap.innerHTML = "";
-    items
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((item) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "chip";
-        btn.textContent = item.name;
+    (sort ? items.slice().sort((a, b) => a.name.localeCompare(b.name)) : items).forEach((item) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip";
+      btn.textContent = item.name;
+      btn.setAttribute("aria-pressed", selectedSet.has(item.name) ? "true" : "false");
+      btn.addEventListener("click", () => {
+        onToggle(item.name);
         btn.setAttribute("aria-pressed", selectedSet.has(item.name) ? "true" : "false");
-        btn.addEventListener("click", () => {
-          onToggle(item.name);
-          btn.setAttribute("aria-pressed", selectedSet.has(item.name) ? "true" : "false");
-        });
-        wrap.appendChild(btn);
       });
+      wrap.appendChild(btn);
+    });
   }
 
   /** @param {{name: string}[]} tags */
-  function renderTagChips(wrap, tags, selectedSet, onToggle) {
-    renderMultiSelectChips(wrap, tags, selectedSet, onToggle);
+  function renderTagChips(wrap, tags, selectedSet, onToggle, opts) {
+    renderMultiSelectChips(wrap, tags, selectedSet, onToggle, opts);
   }
 
   /** @param {{name: string}[]} conditions */
-  function renderConditionChips(wrap, conditions, selectedSet, onToggle) {
-    renderMultiSelectChips(wrap, conditions, selectedSet, onToggle);
+  function renderConditionChips(wrap, conditions, selectedSet, onToggle, opts) {
+    renderMultiSelectChips(wrap, conditions, selectedSet, onToggle, opts);
   }
 
   /**

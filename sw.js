@@ -17,6 +17,7 @@ const APP_SHELL = [
   "./css/style.css",
   "./vendor/chart.umd.min.js",
   "./js/db.js",
+  "./js/settings.js",
   "./js/date-utils.js",
   "./js/pickers.js",
   "./js/importer.js",

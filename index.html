@@ -21,6 +21,15 @@
 <body>
   <header class="app-header">
     <h1 id="app-title">Symptom Tracker</h1>
+    <button id="settings-btn" class="settings-btn" aria-label="Settings">
+      <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="3.2"></circle>
+        <circle cx="12" cy="12" r="7"></circle>
+        <path
+          d="M12 2v2.2M12 19.8V22M22 12h-2.2M4.2 12H2M19.07 4.93l-1.55 1.55M6.48 17.52l-1.55 1.55M19.07 19.07l-1.55-1.55M6.48 6.48 4.93 4.93"
+        ></path>
+      </svg>
+    </button>
   </header>
 
   <!-- One <section> per tab; app.js toggles the [hidden] attribute and lazily
@@ -32,6 +41,29 @@
     <section id="view-trends" class="view" data-view="trends" hidden></section>
     <section id="view-data" class="view" data-view="data" hidden></section>
   </main>
+
+  <!-- App-shell chrome, not tied to any one tab; app.js wires this up. -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <button type="button" id="settings-close-btn" class="modal-header-btn">Close</button>
+        <h2>Settings</h2>
+        <span class="modal-header-spacer" aria-hidden="true"></span>
+      </div>
+      <div class="field">
+        <label>Tag picker style (Log screen)</label>
+        <div class="chip-row" id="tag-picker-mode-chips">
+          <button type="button" class="chip" data-mode="classic">Classic list</button>
+          <button type="button" class="chip" data-mode="smart">Search &amp; suggestions</button>
+        </div>
+        <p class="export-note" style="margin-top: 0.5rem">
+          "Search &amp; suggestions" adds a searchable field and ranks likely tags based on the
+          condition you pick and what you type in the note — all computed on this device, nothing
+          sent anywhere.
+        </p>
+      </div>
+    </div>
+  </div>
 
   <nav class="tab-bar">
     <button class="tab-button" data-target="log" aria-current="page">
@@ -67,6 +99,7 @@
        app keeps working fully offline per the local-first requirement. -->
   <script src="vendor/chart.umd.min.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/settings.js"></script>
   <script src="js/date-utils.js"></script>
   <script src="js/pickers.js"></script>
   <script src="js/importer.js"></script>

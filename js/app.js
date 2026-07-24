@@ -72,6 +72,43 @@
     });
   }
 
+  /** Wires the header gear icon's Settings sheet (app-shell chrome, not tied to any one tab). */
+  function wireSettingsModal() {
+    const modal = document.getElementById("settings-modal");
+    const openBtn = document.getElementById("settings-btn");
+    const closeBtn = document.getElementById("settings-close-btn");
+    const modeChips = modal.querySelectorAll("#tag-picker-mode-chips .chip");
+
+    function syncModeChips() {
+      const current = Settings.get("tagPickerMode");
+      modeChips.forEach((chip) => {
+        chip.setAttribute("aria-pressed", chip.dataset.mode === current ? "true" : "false");
+      });
+    }
+
+    openBtn.addEventListener("click", () => {
+      syncModeChips();
+      modal.classList.add("is-open");
+    });
+    closeBtn.addEventListener("click", () => modal.classList.remove("is-open"));
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) modal.classList.remove("is-open");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modal.classList.contains("is-open")) modal.classList.remove("is-open");
+    });
+
+    modeChips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        Settings.set("tagPickerMode", chip.dataset.mode);
+        syncModeChips();
+        // Log is always init()'d at boot (it's the default tab), so this is
+        // safe to call even if the user is currently on a different tab.
+        if (LogView.refreshTagPicker) LogView.refreshTagPicker();
+      });
+    });
+  }
+
   /** Shown only if IndexedDB fails to open (e.g. some private-browsing modes restrict it). */
   function showStorageError() {
     const banner = document.createElement("p");
@@ -89,6 +126,7 @@
       showStorageError();
       return;
     }
+    wireSettingsModal();
     showView("log");
     registerServiceWorker();
   }
