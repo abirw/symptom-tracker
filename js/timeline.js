@@ -18,6 +18,7 @@ const TimelineView = (() => {
   let filterTag = "";
   let filterCondition = "";
   let selectedDay = null; // "YYYY-MM-DD" from tapping a heatmap cell, or null
+  let heatmapScrollInitialized = false;
 
   let editingEntry = null;
   let editSelectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
@@ -303,9 +304,15 @@ const TimelineView = (() => {
       gridEl.appendChild(col);
     });
 
-    // Scroll to the most recent week by default rather than the oldest.
-    const scrollWrap = container.querySelector(".heatmap-scroll");
-    scrollWrap.scrollLeft = scrollWrap.scrollWidth;
+    // Scroll to the most recent week by default, but only the first time this
+    // ever renders - later re-renders (a day tap, a filter change, saving an
+    // edit) would otherwise yank the view back to today every time, undoing
+    // any side-scrolling the user just did.
+    if (!heatmapScrollInitialized) {
+      const scrollWrap = container.querySelector(".heatmap-scroll");
+      scrollWrap.scrollLeft = scrollWrap.scrollWidth;
+      heatmapScrollInitialized = true;
+    }
   }
 
   // --- Entry list ---
