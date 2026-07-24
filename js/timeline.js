@@ -3,6 +3,10 @@
  * reverse-chronological entry list, both driven by the same tag/condition
  * filters. Tapping a heatmap day narrows the list to that date; tapping a
  * list entry opens a bottom-sheet modal for editing or deleting it.
+ *
+ * The modal's Tags field is TagPickerField (tag-picker-field.js), shared
+ * with the Log screen so the classic-vs-smart toggle behaves identically
+ * in both places.
  */
 const TimelineView = (() => {
   const HEATMAP_WEEKS = 52;
@@ -16,9 +20,11 @@ const TimelineView = (() => {
   let selectedDay = null; // "YYYY-MM-DD" from tapping a heatmap cell, or null
 
   let editingEntry = null;
-  let editSelectedTags = new Set();
+  let editSelectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
   let editSelectedConditions = new Set();
   let editSelectedSeverity = null;
+  let modalTagField = null;
+  let modalSuggestionDebounceTimer = null;
 
   function render() {
     container.innerHTML = `
@@ -57,11 +63,7 @@ const TimelineView = (() => {
           <form id="modal-form">
             <div class="field">
               <label>Tags</label>
-              <div id="modal-tag-chips" class="chip-row"></div>
-              <div class="add-row">
-                <input type="text" id="modal-new-tag-input" placeholder="Add tag…" autocomplete="off" />
-                <button type="button" id="modal-add-tag-btn">Add</button>
-              </div>
+              <div id="modal-tags-field"></div>
             </div>
             <div class="field">
               <label>Conditions</label>
@@ -384,20 +386,15 @@ const TimelineView = (() => {
     renderList();
   }
 
-  function renderModalPickers() {
-    Pickers.renderTagChips(container.querySelector("#modal-tag-chips"), tags, editSelectedTags, (name) => {
-      if (editSelectedTags.has(name)) {
-        editSelectedTags.delete(name);
-      } else {
-        editSelectedTags.add(name);
-      }
-    });
+  /** Renders the modal's Condition + Severity pickers (Tags is handled separately by modalTagField). */
+  function renderModalConditionAndSeverity() {
     Pickers.renderConditionChips(container.querySelector("#modal-condition-chips"), conditions, editSelectedConditions, (name) => {
       if (editSelectedConditions.has(name)) {
         editSelectedConditions.delete(name);
       } else {
         editSelectedConditions.add(name);
       }
+      maybeRefreshModalSuggestions();
     });
     Pickers.renderSeverity(
       container.querySelector("#modal-severity-row"),
@@ -408,30 +405,12 @@ const TimelineView = (() => {
     );
   }
 
-  /**
-   * Creates a new tag on the fly from the modal (same pattern as the Log
-   * form), using this entry's own timestamp as the tag's firstUsed so
-   * backdating still tracks onset correctly.
-   */
-  async function handleModalAddTag() {
-    const input = container.querySelector("#modal-new-tag-input");
-    const name = input.value.trim();
-    if (!name) return;
-
-    const timestampInput = container.querySelector("#modal-timestamp-input").value;
-    const occurredAt = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
-
-    const tag = await DB.touchTag(name, occurredAt);
-    if (!tags.some((t) => t.name === tag.name)) {
-      tags.push(tag);
-    }
-    editSelectedTags.add(tag.name);
-    input.value = "";
-    renderModalPickers();
-    populateFilterOptions(); // so the new tag is immediately available as a filter too
+  /** Recomputes the modal's tag suggestions if smart mode is active; safe to call before init() completes. */
+  function maybeRefreshModalSuggestions() {
+    if (modalTagField) modalTagField.refreshSuggestions();
   }
 
-  /** Same as handleModalAddTag, for conditions. */
+  /** Same as handleModalAddTag used to be, for conditions (tags are now handled by modalTagField). */
   async function handleModalAddCondition() {
     const input = container.querySelector("#modal-new-condition-input");
     const name = input.value.trim();
@@ -446,8 +425,9 @@ const TimelineView = (() => {
     }
     editSelectedConditions.add(cond.name);
     input.value = "";
-    renderModalPickers();
+    renderModalConditionAndSeverity();
     populateFilterOptions();
+    maybeRefreshModalSuggestions();
   }
 
   /** Opens the edit modal pre-filled with `id`'s current values. */
@@ -456,14 +436,16 @@ const TimelineView = (() => {
     if (!entry) return;
 
     editingEntry = entry;
-    editSelectedTags = new Set(entry.tags || []);
+    editSelectedTags.clear();
+    (entry.tags || []).forEach((t) => editSelectedTags.add(t));
     editSelectedConditions = new Set(entry.conditions || []);
     editSelectedSeverity = entry.severity ?? null;
 
     container.querySelector("#modal-note-input").value = entry.note || "";
     container.querySelector("#modal-timestamp-input").value = DateUtils.toLocalInputValue(entry.timestamp);
 
-    renderModalPickers();
+    if (modalTagField) modalTagField.render();
+    renderModalConditionAndSeverity();
     container.querySelector("#entry-modal").classList.add("is-open");
   }
 
@@ -542,23 +524,36 @@ const TimelineView = (() => {
       renderList();
     });
 
+    modalTagField = TagPickerField.create(container.querySelector("#modal-tags-field"), {
+      selectedTags: editSelectedTags,
+      getAllTags: () => tags,
+      getAllEntries: () => entries,
+      getSelectedConditions: () => editSelectedConditions,
+      getNoteText: () => container.querySelector("#modal-note-input").value,
+      createTag: async (name) => {
+        const timestampInput = container.querySelector("#modal-timestamp-input").value;
+        const occurredAt = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+        const tag = await DB.touchTag(name, occurredAt);
+        if (!tags.some((t) => t.name === tag.name)) tags.push(tag);
+        populateFilterOptions(); // so the new tag is immediately available as a filter too
+        return tag;
+      },
+    });
+
     const modal = container.querySelector("#entry-modal");
     container.querySelector("#modal-close-btn").addEventListener("click", closeModal);
     container.querySelector("#modal-delete-btn").addEventListener("click", handleDelete);
     container.querySelector("#modal-form").addEventListener("submit", handleModalSubmit);
-    container.querySelector("#modal-add-tag-btn").addEventListener("click", handleModalAddTag);
-    container.querySelector("#modal-new-tag-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        handleModalAddTag();
-      }
-    });
     container.querySelector("#modal-add-condition-btn").addEventListener("click", handleModalAddCondition);
     container.querySelector("#modal-new-condition-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
         handleModalAddCondition();
       }
+    });
+    container.querySelector("#modal-note-input").addEventListener("input", () => {
+      clearTimeout(modalSuggestionDebounceTimer);
+      modalSuggestionDebounceTimer = setTimeout(maybeRefreshModalSuggestions, 250);
     });
     // Tapping the dimmed backdrop (not the sheet itself) closes the modal, like a native sheet.
     modal.addEventListener("click", (e) => {
@@ -571,5 +566,10 @@ const TimelineView = (() => {
     await loadData();
   }
 
-  return { init, onShow: loadData };
+  /** Called by the Settings modal when the tag picker mode changes; safe to call even before init(). */
+  function refreshTagPicker() {
+    if (modalTagField) modalTagField.render();
+  }
+
+  return { init, onShow: loadData, refreshTagPicker };
 })();

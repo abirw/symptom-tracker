@@ -102,9 +102,10 @@
       chip.addEventListener("click", () => {
         Settings.set("tagPickerMode", chip.dataset.mode);
         syncModeChips();
-        // Log is always init()'d at boot (it's the default tab), so this is
-        // safe to call even if the user is currently on a different tab.
+        // Both guard internally against not having init()'d yet (Log always
+        // has by this point since it's the default tab; Timeline may not).
         if (LogView.refreshTagPicker) LogView.refreshTagPicker();
+        if (TimelineView.refreshTagPicker) TimelineView.refreshTagPicker();
       });
     });
   }

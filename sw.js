@@ -20,6 +20,7 @@ const APP_SHELL = [
   "./js/settings.js",
   "./js/date-utils.js",
   "./js/pickers.js",
+  "./js/tag-picker-field.js",
   "./js/importer.js",
   "./js/log.js",
   "./js/timeline.js",
