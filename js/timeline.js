@@ -461,6 +461,13 @@ const TimelineView = (() => {
   async function loadData() {
     [entries, tags, conditions] = await Promise.all([DB.getAllEntries(), DB.getAllTags(), DB.getAllConditions()]);
     populateFilterOptions();
+    // Also refresh the edit modal's pickers here, not just in openEntry(): if
+    // the modal was left open when the user switched tabs (it isn't actually
+    // torn down, just hidden along with the rest of this view), returning to
+    // Timeline would otherwise leave it showing whatever tags/conditions
+    // existed the last time it was rendered, even after a fresh loadData().
+    if (modalTagField) modalTagField.render();
+    renderModalConditionAndSeverity();
     renderHeatmap();
     renderDayFilterNote();
     renderList();

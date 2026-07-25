@@ -202,5 +202,9 @@ const LogView = (() => {
     await loadPickers();
   }
 
-  return { init, refreshTagPicker };
+  // Re-fetch tags/conditions/entries every time Log is switched back to, not
+  // just at first load - otherwise a tag created elsewhere (e.g. Data tab's
+  // import) would stay invisible here until a full page reload, since this
+  // view's own copies of that data are never told they've gone stale.
+  return { init, onShow: loadPickers, refreshTagPicker };
 })();
