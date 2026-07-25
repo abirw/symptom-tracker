@@ -58,23 +58,6 @@ const Analysis = (() => {
     return labels.map((day, i) => ({ day, count: counts[i] }));
   }
 
-  /** Counts per 6-hour segment of the day: Night (0-6), Morning (6-12), Afternoon (12-18), Evening (18-24). */
-  function computeTimeOfDayDistribution(entries) {
-    const segments = [
-      { label: "Night", start: 0, end: 6 },
-      { label: "Morning", start: 6, end: 12 },
-      { label: "Afternoon", start: 12, end: 18 },
-      { label: "Evening", start: 18, end: 24 },
-    ];
-    const counts = segments.map(() => 0);
-    entries.forEach((e) => {
-      const hour = new Date(e.timestamp).getHours();
-      const idx = segments.findIndex((s) => hour >= s.start && hour < s.end);
-      if (idx !== -1) counts[idx]++;
-    });
-    return segments.map((s, i) => ({ label: s.label, count: counts[i] }));
-  }
-
   /** Counts per severity level 1-5; entries with no severity are excluded. */
   function computeSeverityDistribution(entries) {
     const counts = [0, 0, 0, 0, 0];
@@ -257,7 +240,6 @@ const Analysis = (() => {
 
   return {
     computeDayOfWeekDistribution,
-    computeTimeOfDayDistribution,
     computeSeverityDistribution,
     computeCoOccurrence,
     computeStreaksAndGaps,

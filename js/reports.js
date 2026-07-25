@@ -238,22 +238,15 @@ const ReportsView = (() => {
     });
   }
 
-  function renderDayOfWeekAndTimeOfDay(bodyEl, focusEntries, printMode) {
+  function renderDayOfWeek(bodyEl, focusEntries, printMode) {
     bodyEl.insertAdjacentHTML(
       "beforeend",
-      `<div class="chart-card"><h3>Day of Week</h3><div class="chart-wrap"><canvas id="report-dow-chart"></canvas></div></div>
-       <div class="chart-card"><h3>Time of Day</h3><div class="chart-wrap"><canvas id="report-tod-chart"></canvas></div></div>`
+      `<div class="chart-card"><h3>Day of Week</h3><div class="chart-wrap"><canvas id="report-dow-chart"></canvas></div></div>`
     );
     const dow = Analysis.computeDayOfWeekDistribution(focusEntries);
-    const tod = Analysis.computeTimeOfDayDistribution(focusEntries);
     makeChart(bodyEl.querySelector("#report-dow-chart"), {
       type: "bar",
       data: { labels: dow.map((d) => d.day), datasets: [{ data: dow.map((d) => d.count), backgroundColor: SERIES_COLOR, borderRadius: 4 }] },
-      options: chartOptions({ beginAtZero: true, stepSize: 1 }, false, printMode),
-    });
-    makeChart(bodyEl.querySelector("#report-tod-chart"), {
-      type: "bar",
-      data: { labels: tod.map((d) => d.label), datasets: [{ data: tod.map((d) => d.count), backgroundColor: SERIES_COLOR, borderRadius: 4 }] },
       options: chartOptions({ beginAtZero: true, stepSize: 1 }, false, printMode),
     });
   }
@@ -470,7 +463,7 @@ const ReportsView = (() => {
     bodyEl.insertAdjacentHTML("beforeend", buildStatCardsHtml(focusEntries, streaks));
     renderFrequencySeverityCharts(bodyEl, focusEntries, tagName, start, end, printMode);
     renderSeverityDistribution(bodyEl, focusEntries, printMode);
-    renderDayOfWeekAndTimeOfDay(bodyEl, focusEntries, printMode);
+    renderDayOfWeek(bodyEl, focusEntries, printMode);
     renderStreaksCard(bodyEl, streaks);
     renderCoOccurrence(bodyEl, windowedPool, tagName);
     renderClusters(bodyEl, windowedPool, tagName);
