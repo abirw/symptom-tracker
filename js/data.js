@@ -145,7 +145,10 @@ const DataView = (() => {
     const parts = [`${entries.length} ${entries.length === 1 ? "entry" : "entries"}`];
     if (tags.length) parts.push(`${tags.length} ${tags.length === 1 ? "tag" : "tags"}`);
     if (conditions.length) parts.push(`${conditions.length} ${conditions.length === 1 ? "condition" : "conditions"}`);
-    const found = `Found ${parts.join(", ")}.`;
+    let found = `Found ${parts.join(", ")}.`;
+    if (tags.length === 0 && conditions.length === 0) {
+      found += " No tags/conditions section in this file - tags and their tracking-started dates will be recomputed from the entries themselves.";
+    }
 
     let action;
     if (structuredImportMode === "replace") {
@@ -194,6 +197,28 @@ const DataView = (() => {
     }
   }
 
+  /**
+   * The earliest timestamp, per name, among entries referencing it under
+   * `field` ("tags" or "conditions"). Used to (re)compute an accurate
+   * firstUsed/createdAt in one pass instead of one DB round-trip per
+   * (entry, name) pair - the touchTag/touchCondition backward-only
+   * correction would converge to the same result either way, but this is
+   * both faster and makes the "recompute from entries" intent explicit,
+   * so a tags/conditions section becomes wholly optional in the file.
+   */
+  function computeEarliestByName(entries, field) {
+    const earliest = new Map();
+    entries.forEach((e) => {
+      (e[field] || []).forEach((name) => {
+        const current = earliest.get(name);
+        if (!current || new Date(e.timestamp) < new Date(current)) {
+          earliest.set(name, e.timestamp);
+        }
+      });
+    });
+    return earliest;
+  }
+
   async function confirmStructuredImport() {
     if (!pendingStructuredImport) return;
     const btn = container.querySelector("#import-structured-confirm-btn");
@@ -216,6 +241,14 @@ const DataView = (() => {
     btn.textContent = "Importing…";
 
     try {
+      // Explicit tags/conditions metadata (if the file has any) is merged
+      // first - preferring the earlier of its stated date vs whatever's
+      // already stored. Then every tag/condition actually referenced by the
+      // entries gets touched with its true earliest occurrence in this file,
+      // which both fills in anything the metadata didn't cover and corrects
+      // it if the entries show an even earlier real occurrence. A file with
+      // no tags/conditions section at all works the same way - every name
+      // just gets created fresh from the entries instead.
       for (const t of tags) {
         await DB.mergeTagRecord(t);
       }
@@ -227,13 +260,16 @@ const DataView = (() => {
         await DB.clearAllEntries();
       }
 
+      const earliestTagUse = computeEarliestByName(entries, "tags");
+      for (const [name, occurredAt] of earliestTagUse) {
+        await DB.touchTag(name, occurredAt);
+      }
+      const earliestConditionUse = computeEarliestByName(entries, "conditions");
+      for (const [name, occurredAt] of earliestConditionUse) {
+        await DB.touchCondition(name, occurredAt);
+      }
+
       for (const e of entries) {
-        for (const name of e.tags || []) {
-          await DB.touchTag(name, e.timestamp);
-        }
-        for (const name of e.conditions || []) {
-          await DB.touchCondition(name, e.timestamp);
-        }
         await DB.updateEntry({ ...e, id: e.id || DB.uuid() });
       }
 
