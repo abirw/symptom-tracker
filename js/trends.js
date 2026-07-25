@@ -11,17 +11,26 @@
  * x-axis, but each symptom's own line stays null (not drawn) before that
  * symptom's own firstUsed date - so comparing an old symptom against a
  * newly-tracked one never implies the newer one appeared out of nowhere.
+ *
+ * A separate "Factors" filter (period, heatwaves, medication changes, etc.)
+ * doesn't filter the symptom data at all - selecting one just adds a "Factor
+ * Activity" chart-card sharing the exact same bucket window as whatever's
+ * already plotted, so the two can be visually compared side by side.
  */
 const TrendsView = (() => {
   let container;
   let entries = [];
   let tags = [];
   let conditions = [];
+  let factors = [];
+  let factorEntries = [];
   let selectedTagNames = new Set();
   let selectedConditionNames = new Set();
+  let selectedFactorNames = new Set();
   let selectedRange = "90";
   let freqChart = null;
   let sevChart = null;
+  let factorChart = null;
 
   const RANGE_OPTIONS = [
     { value: "30", label: "Last 30 days" },
@@ -44,6 +53,10 @@ const TrendsView = (() => {
         <label>Condition</label>
         <div id="trends-condition-chips" class="chip-row"></div>
       </div>
+      <div class="field">
+        <label>Factors</label>
+        <div id="trends-factor-chips" class="chip-row"></div>
+      </div>
       <div class="filter-bar">
         <select id="trends-range">
           ${RANGE_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
@@ -59,10 +72,14 @@ const TrendsView = (() => {
         <h3>Severity</h3>
         <div class="chart-wrap"><canvas id="sev-chart"></canvas></div>
       </div>
+      <div class="chart-card" id="factor-chart-card" hidden>
+        <h3>Factor Activity</h3>
+        <div class="chart-wrap"><canvas id="factor-chart"></canvas></div>
+      </div>
     `;
   }
 
-  /** Renders the tag/condition filter chips, dropping any prior selection that no longer exists. */
+  /** Renders the tag/condition/factor filter chips, dropping any prior selection that no longer exists. */
   function populateFilterChips() {
     const tagNames = new Set(tags.map((t) => t.name));
     selectedTagNames.forEach((name) => {
@@ -71,6 +88,10 @@ const TrendsView = (() => {
     const conditionNames = new Set(conditions.map((c) => c.name));
     selectedConditionNames.forEach((name) => {
       if (!conditionNames.has(name)) selectedConditionNames.delete(name);
+    });
+    const factorNames = new Set(factors.map((f) => f.name));
+    selectedFactorNames.forEach((name) => {
+      if (!factorNames.has(name)) selectedFactorNames.delete(name);
     });
 
     Pickers.renderTagChips(container.querySelector("#trends-tag-chips"), tags, selectedTagNames, (name) => {
@@ -86,6 +107,18 @@ const TrendsView = (() => {
         selectedConditionNames.delete(name);
       } else {
         selectedConditionNames.add(name);
+      }
+      renderCharts();
+    });
+    // Factors don't filter the symptom data at all - selecting one just adds
+    // the Factor Activity chart-card below, so this is genuinely multi-select
+    // (unlike Reports' single-select symptom picker) and Pickers' own
+    // per-button flip is sufficient - no full re-render needed here.
+    Pickers.renderTagChips(container.querySelector("#trends-factor-chips"), factors, selectedFactorNames, (name) => {
+      if (selectedFactorNames.has(name)) {
+        selectedFactorNames.delete(name);
+      } else {
+        selectedFactorNames.add(name);
       }
       renderCharts();
     });
@@ -149,6 +182,10 @@ const TrendsView = (() => {
     if (sevChart) {
       sevChart.destroy();
       sevChart = null;
+    }
+    if (factorChart) {
+      factorChart.destroy();
+      factorChart = null;
     }
   }
 
@@ -252,6 +289,8 @@ const TrendsView = (() => {
       },
       options: chartOptions({ beginAtZero: true, max: 5, stepSize: 1 }, false),
     });
+
+    return { granularity, buckets, labels };
   }
 
   /** 2+ symptoms selected: one line per symptom, sharing an x-axis but each independently clipped to its own firstUsed. */
@@ -336,6 +375,46 @@ const TrendsView = (() => {
       data: { labels, datasets: perTag.map((t) => t.sevDataset) },
       options: chartOptions({ beginAtZero: true, max: 5, stepSize: 1 }, true),
     });
+
+    return { granularity, buckets, labels };
+  }
+
+  /**
+   * Renders (or hides) the Factor Activity chart-card: one bar series per
+   * selected factor, counted into the SAME buckets as whatever the
+   * Frequency/Severity charts just rendered, so the two are visually
+   * comparable on the same x-axis. Doesn't filter symptom data at all.
+   */
+  function renderFactorActivity(windowInfo) {
+    const card = container.querySelector("#factor-chart-card");
+    if (selectedFactorNames.size === 0 || !windowInfo) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+
+    const { granularity, buckets, labels } = windowInfo;
+    const names = Array.from(selectedFactorNames);
+
+    const datasets = names.map((name, i) => {
+      const counts = buckets.map(() => 0);
+      factorEntries
+        .filter((f) => f.name === name)
+        .forEach((f) => {
+          const t = new Date(f.timestamp);
+          const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+          const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
+          if (idx !== -1) counts[idx]++;
+        });
+      const color = SERIES_COLORS[i % SERIES_COLORS.length];
+      return { label: name, data: counts, backgroundColor: color, borderColor: color, borderRadius: 4 };
+    });
+
+    factorChart = new Chart(container.querySelector("#factor-chart").getContext("2d"), {
+      type: "bar",
+      data: { labels, datasets },
+      options: chartOptions({ beginAtZero: true, stepSize: 1 }, names.length > 1),
+    });
   }
 
   /** Recomputes the effective window(s)/buckets and (re)draws both charts from scratch. */
@@ -354,6 +433,7 @@ const TrendsView = (() => {
       emptyEl.textContent = "No entries yet — log a few to see trends.";
       freqCard.hidden = true;
       sevCard.hidden = true;
+      container.querySelector("#factor-chart-card").hidden = true;
       return;
     }
 
@@ -363,15 +443,22 @@ const TrendsView = (() => {
     const pool = conditionFilteredPool();
     const selected = Array.from(selectedTagNames);
 
-    if (selected.length >= 2) {
-      renderCompareMode(pool, selected, noteEl, emptyEl);
-    } else {
-      renderSingleMode(pool, selected[0] || null, noteEl, emptyEl);
-    }
+    const windowInfo =
+      selected.length >= 2
+        ? renderCompareMode(pool, selected, noteEl, emptyEl)
+        : renderSingleMode(pool, selected[0] || null, noteEl, emptyEl);
+
+    renderFactorActivity(windowInfo);
   }
 
   async function loadData() {
-    [entries, tags, conditions] = await Promise.all([DB.getAllEntries(), DB.getAllTags(), DB.getAllConditions()]);
+    [entries, tags, conditions, factors, factorEntries] = await Promise.all([
+      DB.getAllEntries(),
+      DB.getAllTags(),
+      DB.getAllConditions(),
+      DB.getAllFactors(),
+      DB.getAllFactorEntries(),
+    ]);
     populateFilterChips();
     renderCharts();
   }

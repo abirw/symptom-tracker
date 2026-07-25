@@ -7,12 +7,15 @@
  * Every section - stat cards, charts, streaks, clusters, co-occurrence, notes -
  * is computed from the SAME filtered pool (condition filter + date range),
  * so "Last 90 days" scopes the whole report, including episode detection.
+ * Co-occurring Factors ranks the logged factors (period, heatwaves,
+ * medication changes, etc.) active on the same days as the selected symptom.
  */
 const ReportsView = (() => {
   let container;
   let entries = [];
   let tags = [];
   let conditions = [];
+  let factorEntries = [];
   let selectedTagName = new Set(); // at most 1 entry - single-select via clear-then-add
   let selectedConditionNames = new Set();
   let selectedRange = "90";
@@ -71,6 +74,10 @@ const ReportsView = (() => {
         selectedTagName.add(name);
       }
       wordTrendState.word = null;
+      // Pickers only flips the clicked chip's own aria-pressed - single-select
+      // via clear-then-add also needs whichever chip was PREVIOUSLY selected
+      // to un-press itself, so re-render the whole row, not just the report.
+      populateFilterChips();
       renderReport();
     });
     Pickers.renderConditionChips(container.querySelector("#reports-condition-chips"), conditions, selectedConditionNames, (name) => {
@@ -285,6 +292,26 @@ const ReportsView = (() => {
     );
   }
 
+  /** Same day-based ranking as renderCoOccurrence, but against factor entries (period, heatwaves, medication changes, etc.). */
+  function renderCoOccurringFactors(bodyEl, pool, tagName, factorPool) {
+    const co = Analysis.computeFactorCoOccurrence(pool, tagName, factorPool);
+    if (co.factors.length === 0) return;
+    const rows = co.factors
+      .slice(0, 8)
+      .map(
+        (item) =>
+          `<div class="cooccur-row"><span class="chip chip-static">${item.name}</span><span class="cooccur-pct">${item.percentOfDays}% of days</span></div>`
+      )
+      .join("");
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="chart-card">
+        <h3>Co-occurring Factors</h3>
+        <div class="cooccur-list">${rows}</div>
+      </div>`
+    );
+  }
+
   function renderClusters(bodyEl, pool, tagName) {
     const clusters = Analysis.computeClusters(pool, tagName, { maxGapDays, minClusterDays: 2 });
     const items = clusters
@@ -434,6 +461,10 @@ const ReportsView = (() => {
       const t = new Date(e.timestamp);
       return t >= start && t <= end;
     });
+    const windowedFactorEntries = factorEntries.filter((f) => {
+      const t = new Date(f.timestamp);
+      return t >= start && t <= end;
+    });
 
     if (tagFirstUsed) {
       noteEl.hidden = false;
@@ -466,6 +497,7 @@ const ReportsView = (() => {
     renderDayOfWeek(bodyEl, focusEntries, printMode);
     renderStreaksCard(bodyEl, streaks);
     renderCoOccurrence(bodyEl, windowedPool, tagName);
+    renderCoOccurringFactors(bodyEl, windowedPool, tagName, windowedFactorEntries);
     renderClusters(bodyEl, windowedPool, tagName);
     renderNotesWordFrequency(bodyEl, focusEntries, printMode);
   }
@@ -483,7 +515,12 @@ const ReportsView = (() => {
   }
 
   async function loadData() {
-    [entries, tags, conditions] = await Promise.all([DB.getAllEntries(), DB.getAllTags(), DB.getAllConditions()]);
+    [entries, tags, conditions, factorEntries] = await Promise.all([
+      DB.getAllEntries(),
+      DB.getAllTags(),
+      DB.getAllConditions(),
+      DB.getAllFactorEntries(),
+    ]);
     populateFilterChips();
     renderReport();
   }

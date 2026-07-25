@@ -8,6 +8,14 @@
  * The Tags field itself is TagPickerField (tag-picker-field.js), shared with
  * Timeline's edit modal so the classic-vs-smart toggle behaves identically
  * in both places.
+ *
+ * Below the entry form is a second, independent "Other Factors" section for
+ * logging non-symptom things (period, heatwaves, medication changes) that
+ * might explain symptom patterns. These are deliberately a separate log
+ * (DB.factors/factorEntries), not attached to a symptom entry - a multi-day
+ * period is logged as one factor entry per day, the same way a run of
+ * distinct same-day symptom entries is already how this app models repeated
+ * episodes, rather than as a date range.
  */
 const LogView = (() => {
   let container;
@@ -20,6 +28,12 @@ const LogView = (() => {
   let confirmationTimer = null;
   let suggestionDebounceTimer = null;
   let tagField = null;
+
+  let selectedFactor = new Set(); // at most 1 entry - single-select via clear-then-add, like Reports' symptom picker
+  let allFactors = [];
+  let allFactorEntries = [];
+  let factorConfirmationTimer = null;
+  let armedFactorEntryId = null; // two-tap delete: first tap arms this row, a second tap on the same row deletes
 
   function render() {
     container.innerHTML = `
@@ -56,6 +70,37 @@ const LogView = (() => {
         <button type="submit" class="primary-btn">Save Entry</button>
         <p id="save-confirmation" class="confirmation" hidden>✓ Saved</p>
       </form>
+
+      <hr class="section-divider" />
+      <h2 class="section-heading">Other Factors</h2>
+      <p class="export-note" style="margin-top: 0">
+        Non-symptom things that might explain a pattern - period, heatwaves, a new medication.
+        Logged separately from entries above; a multi-day factor is logged once per day it's active.
+      </p>
+      <form id="factor-form" class="log-form">
+        <div class="field">
+          <label>Factor</label>
+          <div id="factor-chips" class="chip-row"></div>
+          <div class="add-row">
+            <input type="text" id="new-factor-input" placeholder="Add factor…" autocomplete="off" />
+            <button type="button" id="add-factor-btn">Add</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="factor-timestamp-input">Time</label>
+          <input type="datetime-local" id="factor-timestamp-input" />
+        </div>
+
+        <div class="field">
+          <label for="factor-note-input">Note</label>
+          <textarea id="factor-note-input" rows="2" placeholder="Optional note…"></textarea>
+        </div>
+
+        <button type="submit" class="secondary-btn">Log Factor</button>
+        <p id="factor-save-confirmation" class="confirmation" hidden>✓ Logged</p>
+      </form>
+      <div id="recent-factors-list" class="tag-manage-list"></div>
     `;
   }
 
@@ -82,13 +127,17 @@ const LogView = (() => {
   }
 
   async function loadPickers() {
-    [allTags, allConditions, allEntries] = await Promise.all([
+    [allTags, allConditions, allEntries, allFactors, allFactorEntries] = await Promise.all([
       DB.getAllTags(),
       DB.getAllConditions(),
       DB.getAllEntries(),
+      DB.getAllFactors(),
+      DB.getAllFactorEntries(),
     ]);
     if (tagField) tagField.render();
     renderConditionChips();
+    renderFactorChips();
+    renderRecentFactors();
   }
 
   async function handleAddCondition() {
@@ -120,7 +169,7 @@ const LogView = (() => {
   async function handleSubmit(event) {
     event.preventDefault();
 
-    const submitBtn = container.querySelector('button[type="submit"]');
+    const submitBtn = container.querySelector('#log-form button[type="submit"]');
     submitBtn.disabled = true; // guard against a double-tap creating two entries
 
     try {
@@ -162,6 +211,153 @@ const LogView = (() => {
     }, 1500);
   }
 
+  // --- Other Factors ---
+
+  function renderFactorChips() {
+    Pickers.renderTagChips(container.querySelector("#factor-chips"), allFactors, selectedFactor, (name) => {
+      if (selectedFactor.has(name)) {
+        selectedFactor.clear(); // tap the selected chip again to deselect
+      } else {
+        selectedFactor.clear();
+        selectedFactor.add(name);
+      }
+      // Full re-render, not just the clicked chip: Pickers only flips the
+      // button that was actually clicked, but single-select via clear-then-add
+      // also needs whichever chip was PREVIOUSLY selected to un-press itself.
+      renderFactorChips();
+    });
+  }
+
+  async function handleAddFactor() {
+    const input = container.querySelector("#new-factor-input");
+    const name = input.value.trim();
+    if (!name) return;
+    const factor = await DB.touchFactor(name);
+    if (!allFactors.some((f) => f.name === factor.name)) {
+      allFactors.push(factor);
+    }
+    selectedFactor.clear();
+    selectedFactor.add(factor.name);
+    input.value = "";
+    renderFactorChips();
+  }
+
+  function resetFactorForm() {
+    selectedFactor.clear();
+    container.querySelector("#factor-note-input").value = "";
+    container.querySelector("#factor-timestamp-input").value = DateUtils.nowForInput();
+    renderFactorChips();
+  }
+
+  async function handleFactorSubmit(event) {
+    event.preventDefault();
+    const name = [...selectedFactor][0];
+    if (!name) return;
+
+    const submitBtn = container.querySelector('#factor-form button[type="submit"]');
+    submitBtn.disabled = true;
+
+    try {
+      const note = container.querySelector("#factor-note-input").value.trim();
+      const timestampInput = container.querySelector("#factor-timestamp-input").value;
+      const timestamp = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+
+      await DB.touchFactor(name, timestamp);
+      const record = await DB.addFactorEntry({ timestamp, name, note });
+      allFactorEntries.push(record);
+
+      showFactorConfirmation();
+      resetFactorForm();
+      renderRecentFactors();
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  function showFactorConfirmation() {
+    const el = container.querySelector("#factor-save-confirmation");
+    el.hidden = false;
+    clearTimeout(factorConfirmationTimer);
+    factorConfirmationTimer = setTimeout(() => {
+      el.hidden = true;
+    }, 1500);
+  }
+
+  function formatFactorDateTime(iso) {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  /** Reuses Data tab's .tag-manage-row layout for a lightweight name + meta + action-button row. */
+  function buildFactorRow(entry) {
+    const row = document.createElement("div");
+    row.className = "tag-manage-row";
+
+    const info = document.createElement("div");
+    info.className = "tag-manage-info";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "tag-manage-name";
+    nameEl.textContent = entry.name;
+    info.appendChild(nameEl);
+
+    const meta = document.createElement("span");
+    meta.className = "tag-manage-meta";
+    meta.textContent = entry.note ? `${formatFactorDateTime(entry.timestamp)} · ${entry.note}` : formatFactorDateTime(entry.timestamp);
+    info.appendChild(meta);
+
+    row.appendChild(info);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "tag-manage-rename-btn modal-delete";
+    deleteBtn.textContent = armedFactorEntryId === entry.id ? "Confirm?" : "Delete";
+    deleteBtn.addEventListener("click", () => handleDeleteFactorEntry(entry.id));
+    row.appendChild(deleteBtn);
+
+    return row;
+  }
+
+  function renderRecentFactors() {
+    const wrap = container.querySelector("#recent-factors-list");
+    wrap.innerHTML = "";
+
+    const sorted = allFactorEntries.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    if (sorted.length === 0) {
+      const p = document.createElement("p");
+      p.className = "placeholder";
+      p.textContent = "No factors logged yet.";
+      wrap.appendChild(p);
+      return;
+    }
+
+    sorted.slice(0, 15).forEach((entry) => wrap.appendChild(buildFactorRow(entry)));
+  }
+
+  /**
+   * Two-tap in-page confirmation, same reasoning as Timeline's entry delete:
+   * window.confirm() silently no-ops in an installed iOS home-screen PWA.
+   * Only one row can be "armed" at a time - arming a different row's delete
+   * disarms whichever was previously armed.
+   */
+  async function handleDeleteFactorEntry(id) {
+    if (armedFactorEntryId !== id) {
+      armedFactorEntryId = id;
+      renderRecentFactors();
+      return;
+    }
+
+    await DB.deleteFactorEntry(id);
+    allFactorEntries = allFactorEntries.filter((e) => e.id !== id);
+    armedFactorEntryId = null;
+    renderRecentFactors();
+  }
+
   /** Called by the Settings modal when the tag picker mode changes; safe to call even before init(). */
   function refreshTagPicker() {
     if (tagField) tagField.render();
@@ -199,12 +395,23 @@ const LogView = (() => {
 
     renderSeverity();
     container.querySelector("#timestamp-input").value = DateUtils.nowForInput();
+
+    container.querySelector("#factor-form").addEventListener("submit", handleFactorSubmit);
+    container.querySelector("#add-factor-btn").addEventListener("click", handleAddFactor);
+    container.querySelector("#new-factor-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleAddFactor();
+      }
+    });
+    container.querySelector("#factor-timestamp-input").value = DateUtils.nowForInput();
+
     await loadPickers();
   }
 
-  // Re-fetch tags/conditions/entries every time Log is switched back to, not
-  // just at first load - otherwise a tag created elsewhere (e.g. Data tab's
-  // import) would stay invisible here until a full page reload, since this
-  // view's own copies of that data are never told they've gone stale.
+  // Re-fetch tags/conditions/entries/factors every time Log is switched back
+  // to, not just at first load - otherwise a tag created elsewhere (e.g.
+  // Data tab's import) would stay invisible here until a full page reload,
+  // since this view's own copies of that data are never told they've gone stale.
   return { init, onShow: loadPickers, refreshTagPicker };
 })();

@@ -1,13 +1,16 @@
 /**
- * Hand-rolled IndexedDB wrapper — no external dependency. Exposes three
- * object stores: `entries` (the logged symptom entries), `tags`, and
- * `conditions` (both "grow as you go" lookup lists per SPEC.md). Every
- * public method returns a Promise; there is no in-memory cache here, callers
- * (the view modules) hold their own copies for the duration of a render.
+ * Hand-rolled IndexedDB wrapper — no external dependency. Exposes five
+ * object stores: `entries` (the logged symptom entries), `tags` and
+ * `conditions` (both "grow as you go" lookup lists per SPEC.md), and
+ * `factorEntries`/`factors` — a parallel, simpler log for things like period,
+ * heatwaves, or medication changes that aren't symptoms themselves but help
+ * explain symptom patterns (deliberately kept separate from `entries`).
+ * Every public method returns a Promise; there is no in-memory cache here,
+ * callers (the view modules) hold their own copies for the duration of a render.
  */
 const DB = (() => {
   const DB_NAME = "symptom-tracker";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
 
   let dbPromise = null;
 
@@ -62,6 +65,17 @@ const DB = (() => {
             }
             cursor.continue();
           };
+        }
+
+        if (event.oldVersion < 3) {
+          // v2 -> v3: adds the "other factors" log (period, heatwaves,
+          // medication changes, etc.) - a parallel, simpler store alongside
+          // the existing ones. Purely additive: nothing here touches
+          // entries/tags/conditions.
+          db.createObjectStore("factors", { keyPath: "name" });
+          const factorEntries = db.createObjectStore("factorEntries", { keyPath: "id" });
+          factorEntries.createIndex("timestamp", "timestamp");
+          factorEntries.createIndex("name", "name");
         }
       };
 
@@ -299,6 +313,60 @@ const DB = (() => {
     return existing;
   }
 
+  // --- Factors (a separate, simpler log for non-symptom things like period/heat/medication changes) ---
+
+  /** Same idempotent create-if-missing pattern as touchTag/touchCondition, for the factor lookup list. */
+  async function touchFactor(name, occurredAt = new Date().toISOString()) {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const store = await tx("factors", "readwrite");
+    const existing = await promisifyRequest(store.get(trimmed));
+    if (!existing) {
+      const record = { name: trimmed, firstUsed: occurredAt };
+      await promisifyRequest(store.add(record));
+      return record;
+    }
+    if (new Date(occurredAt) < new Date(existing.firstUsed)) {
+      const corrected = { ...existing, firstUsed: occurredAt };
+      await promisifyRequest(store.put(corrected));
+      return corrected;
+    }
+    return existing;
+  }
+
+  async function getAllFactors() {
+    const store = await tx("factors", "readonly");
+    return promisifyRequest(store.getAll());
+  }
+
+  /**
+   * Logs a single factor occurrence. Unlike `entries`, a factor entry always
+   * has exactly one `name` and no severity/tags/conditions - a multi-day
+   * period is logged as one entry per day it's active, not a date range.
+   * @param {{id?: string, timestamp?: string, name: string, note?: string}} entry
+   */
+  async function addFactorEntry(entry) {
+    const record = {
+      id: entry.id || uuid(),
+      timestamp: entry.timestamp || new Date().toISOString(),
+      name: entry.name,
+      note: entry.note || "",
+    };
+    const store = await tx("factorEntries", "readwrite");
+    await promisifyRequest(store.add(record));
+    return record;
+  }
+
+  async function deleteFactorEntry(id) {
+    const store = await tx("factorEntries", "readwrite");
+    await promisifyRequest(store.delete(id));
+  }
+
+  async function getAllFactorEntries() {
+    const store = await tx("factorEntries", "readonly");
+    return promisifyRequest(store.getAll());
+  }
+
   /** Inserts `record` if missing, or corrects `dateField` backward if `incomingDate` predates the stored one. */
   async function upsertEarliest(store, name, dateField, incomingDate, extraDefaults) {
     const trimmed = (name || "").trim();
@@ -376,5 +444,10 @@ const DB = (() => {
     touchCondition,
     getAllConditions,
     mergeConditionRecord,
+    touchFactor,
+    getAllFactors,
+    addFactorEntry,
+    deleteFactorEntry,
+    getAllFactorEntries,
   };
 })();

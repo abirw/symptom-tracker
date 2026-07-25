@@ -101,6 +101,36 @@ const Analysis = (() => {
   }
 
   /**
+   * Same day-based tally as computeCoOccurrence, but against a separate
+   * `factorEntries` array (period, heatwaves, medication changes, etc.)
+   * instead of the same entries' own tags - "was this factor active on the
+   * days this symptom occurred?".
+   */
+  function computeFactorCoOccurrence(entries, focusTagName, factorEntries) {
+    const focusDayKeys = new Set(entriesWithTag(entries, focusTagName).map((e) => dayKey(e.timestamp)));
+    const totalDays = focusDayKeys.size;
+
+    const factorDayPresence = new Map(); // name -> Set of day keys
+
+    factorEntries.forEach((f) => {
+      const key = dayKey(f.timestamp);
+      if (!focusDayKeys.has(key)) return;
+      if (!factorDayPresence.has(f.name)) factorDayPresence.set(f.name, new Set());
+      factorDayPresence.get(f.name).add(key);
+    });
+
+    const factors = [...factorDayPresence.entries()]
+      .map(([name, days]) => ({
+        name,
+        count: days.size,
+        percentOfDays: totalDays ? Math.round((days.size / totalDays) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    return { totalDays, factors };
+  }
+
+  /**
    * Distinct-day streak/gap stats for `focusTagName`. `longestGapDays` also
    * considers the current ongoing gap (days since the last occurrence) as a
    * candidate, so "it's been 45 days" can itself be the record. `averageGapDays`
@@ -237,6 +267,7 @@ const Analysis = (() => {
     computeDayOfWeekDistribution,
     computeSeverityDistribution,
     computeCoOccurrence,
+    computeFactorCoOccurrence,
     computeStreaksAndGaps,
     computeClusters,
     computeNoteWordFrequency,
