@@ -219,6 +219,17 @@ const DataView = (() => {
     return earliest;
   }
 
+  /**
+   * Runs the actual import - no confirm() dialog gate: those are silently
+   * broken in an installed iOS PWA (standalone display mode doesn't show
+   * native confirm/alert/prompt at all, so `if (!confirm(...)) return`
+   * would just exit immediately with no visible effect, which is exactly
+   * what "Replace All does nothing" was). The destructive consequences of
+   * Replace All are stated up front in the summary text instead, and the
+   * whole import runs as one batched DB.bulkImportEntries() transaction
+   * rather than a separate transaction per tag/condition/entry, so it
+   * can't feel like it's hung on a real export either.
+   */
   async function confirmStructuredImport() {
     if (!pendingStructuredImport) return;
     const btn = container.querySelector("#import-structured-confirm-btn");
@@ -226,52 +237,19 @@ const DataView = (() => {
     const { entries, tags, conditions } = pendingStructuredImport;
     const isReplace = structuredImportMode === "replace";
 
-    if (isReplace) {
-      const currentCount = (await DB.getAllEntries()).length;
-      const ok = confirm(
-        currentCount > 0
-          ? `Delete all ${currentCount} existing ${currentCount === 1 ? "entry" : "entries"} and replace with ` +
-              `${entries.length} from this file? This can't be undone.`
-          : `Import ${entries.length} ${entries.length === 1 ? "entry" : "entries"} from this file?`
-      );
-      if (!ok) return;
-    }
-
     btn.disabled = true;
     btn.textContent = "Importing…";
 
     try {
-      // Explicit tags/conditions metadata (if the file has any) is merged
-      // first - preferring the earlier of its stated date vs whatever's
-      // already stored. Then every tag/condition actually referenced by the
-      // entries gets touched with its true earliest occurrence in this file,
-      // which both fills in anything the metadata didn't cover and corrects
-      // it if the entries show an even earlier real occurrence. A file with
-      // no tags/conditions section at all works the same way - every name
-      // just gets created fresh from the entries instead.
-      for (const t of tags) {
-        await DB.mergeTagRecord(t);
-      }
-      for (const c of conditions) {
-        await DB.mergeConditionRecord(c);
-      }
-
-      if (isReplace) {
-        await DB.clearAllEntries();
-      }
-
-      const earliestTagUse = computeEarliestByName(entries, "tags");
-      for (const [name, occurredAt] of earliestTagUse) {
-        await DB.touchTag(name, occurredAt);
-      }
-      const earliestConditionUse = computeEarliestByName(entries, "conditions");
-      for (const [name, occurredAt] of earliestConditionUse) {
-        await DB.touchCondition(name, occurredAt);
-      }
-
-      for (const e of entries) {
-        await DB.updateEntry({ ...e, id: e.id || DB.uuid() });
-      }
+      const entriesWithIds = entries.map((e) => ({ ...e, id: e.id || DB.uuid() }));
+      await DB.bulkImportEntries({
+        entries: entriesWithIds,
+        tagRecords: tags,
+        conditionRecords: conditions,
+        tagFirstUse: computeEarliestByName(entries, "tags"),
+        conditionFirstUse: computeEarliestByName(entries, "conditions"),
+        clearExistingEntries: isReplace,
+      });
 
       statusEl.textContent = `${isReplace ? "Replaced all entries with" : "Imported"} ${entries.length} ${
         entries.length === 1 ? "entry" : "entries"

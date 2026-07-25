@@ -24,6 +24,7 @@ const TimelineView = (() => {
   let editSelectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
   let editSelectedConditions = new Set();
   let editSelectedSeverity = null;
+  let deleteArmed = false; // first Delete tap arms it; a second tap actually deletes (see handleDelete)
   let modalTagField = null;
   let modalSuggestionDebounceTimer = null;
 
@@ -525,11 +526,13 @@ const TimelineView = (() => {
 
     if (modalTagField) modalTagField.render();
     renderModalConditionAndSeverity();
+    resetDeleteArm();
     container.querySelector("#entry-modal").classList.add("is-open");
   }
 
   function closeModal() {
     editingEntry = null;
+    resetDeleteArm();
     container.querySelector("#entry-modal").classList.remove("is-open");
   }
 
@@ -576,13 +579,34 @@ const TimelineView = (() => {
     }
   }
 
+  function resetDeleteArm() {
+    deleteArmed = false;
+    const btn = container.querySelector("#modal-delete-btn");
+    if (btn) btn.textContent = "Delete";
+  }
+
+  /**
+   * Two-tap in-page confirmation instead of window.confirm(): standalone
+   * iOS home-screen PWAs don't show native confirm/alert/prompt dialogs at
+   * all (the call just returns falsy immediately), so `if (!confirm(...))
+   * return` would silently no-op every time - exactly like "does nothing".
+   * The first tap re-labels the button as a warning; only a second tap
+   * within the same session actually deletes.
+   */
   async function handleDelete() {
     if (!editingEntry) return;
-    if (!confirm("Delete this entry? This can't be undone.")) return;
+    const btn = container.querySelector("#modal-delete-btn");
+
+    if (!deleteArmed) {
+      deleteArmed = true;
+      btn.textContent = "Confirm Delete?";
+      return;
+    }
 
     await DB.deleteEntry(editingEntry.id);
     entries = entries.filter((e) => e.id !== editingEntry.id);
 
+    resetDeleteArm();
     closeModal();
     renderHeatmap();
     renderList();

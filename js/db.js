@@ -299,6 +299,66 @@ const DB = (() => {
     return existing;
   }
 
+  /** Inserts `record` if missing, or corrects `dateField` backward if `incomingDate` predates the stored one. */
+  async function upsertEarliest(store, name, dateField, incomingDate, extraDefaults) {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    const existing = await promisifyRequest(store.get(trimmed));
+    if (!existing) {
+      await promisifyRequest(store.add({ name: trimmed, [dateField]: incomingDate, ...extraDefaults }));
+      return;
+    }
+    if (new Date(incomingDate) < new Date(existing[dateField])) {
+      await promisifyRequest(store.put({ ...existing, [dateField]: incomingDate }));
+    }
+  }
+
+  /**
+   * Performs a full structured import (Data tab's "Restore a backup") in a
+   * single transaction spanning entries/tags/conditions, instead of the
+   * hundreds of separate transactions a naive per-record loop would open -
+   * that overhead is what made large imports feel like they'd hung even
+   * though they'd eventually finish.
+   * @param {object} opts
+   * @param {object[]} opts.entries - entry records to upsert (each already has an id)
+   * @param {object[]} opts.tagRecords - explicit tag metadata from the file, if any (may be empty)
+   * @param {object[]} opts.conditionRecords - explicit condition metadata from the file, if any (may be empty)
+   * @param {Map<string,string>} opts.tagFirstUse - tag name -> earliest ISO timestamp, derived from the entries
+   * @param {Map<string,string>} opts.conditionFirstUse - condition name -> earliest ISO timestamp, derived from the entries
+   * @param {boolean} opts.clearExistingEntries - true for "Replace All"
+   */
+  async function bulkImportEntries({ entries, tagRecords, conditionRecords, tagFirstUse, conditionFirstUse, clearExistingEntries }) {
+    const db = await open();
+    const transaction = db.transaction(["entries", "tags", "conditions"], "readwrite");
+    const entryStore = transaction.objectStore("entries");
+    const tagStore = transaction.objectStore("tags");
+    const conditionStore = transaction.objectStore("conditions");
+
+    for (const t of tagRecords) {
+      await upsertEarliest(tagStore, t.name, "firstUsed", t.firstUsed || new Date().toISOString(), {
+        color: t.color || null,
+      });
+    }
+    for (const c of conditionRecords) {
+      await upsertEarliest(conditionStore, c.name, "createdAt", c.createdAt || new Date().toISOString(), {});
+    }
+
+    if (clearExistingEntries) {
+      await promisifyRequest(entryStore.clear());
+    }
+
+    for (const [name, occurredAt] of tagFirstUse) {
+      await upsertEarliest(tagStore, name, "firstUsed", occurredAt, { color: null });
+    }
+    for (const [name, occurredAt] of conditionFirstUse) {
+      await upsertEarliest(conditionStore, name, "createdAt", occurredAt, {});
+    }
+
+    for (const e of entries) {
+      await promisifyRequest(entryStore.put(e));
+    }
+  }
+
   return {
     open,
     uuid,
@@ -306,6 +366,7 @@ const DB = (() => {
     updateEntry,
     deleteEntry,
     clearAllEntries,
+    bulkImportEntries,
     getEntry,
     getAllEntries,
     touchTag,
