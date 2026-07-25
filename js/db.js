@@ -475,6 +475,35 @@ const DB = (() => {
     }
   }
 
+  /**
+   * Bulk-adds factor entries from the Data tab's "Import Factor Log", in one
+   * transaction (same reasoning as bulkImportEntries/bulkImportTemperatures).
+   * Unlike bulkImportTemperatures's single "Heatwave" case, an import here
+   * can span several distinct factor names at once, so firstUsed is upserted
+   * per name using the earliest timestamp for that name within this batch.
+   * @param {{name: string, timestamp: string}[]} entries - already deduped
+   *   against existing factorEntries by the caller (same day+name = skip)
+   */
+  async function bulkImportFactorEntries(entries) {
+    const db = await open();
+    const transaction = db.transaction(["factors", "factorEntries"], "readwrite");
+    const factorStore = transaction.objectStore("factors");
+    const factorEntryStore = transaction.objectStore("factorEntries");
+
+    const earliestByName = new Map();
+    for (const e of entries) {
+      const current = earliestByName.get(e.name);
+      if (!current || new Date(e.timestamp) < new Date(current)) earliestByName.set(e.name, e.timestamp);
+    }
+    for (const [name, earliest] of earliestByName) {
+      await upsertEarliest(factorStore, name, "firstUsed", earliest, {});
+    }
+
+    for (const e of entries) {
+      await promisifyRequest(factorEntryStore.add({ id: uuid(), timestamp: e.timestamp, name: e.name, note: "" }));
+    }
+  }
+
   return {
     open,
     uuid,
@@ -499,5 +528,6 @@ const DB = (() => {
     getAllFactorEntries,
     getAllTemperatures,
     bulkImportTemperatures,
+    bulkImportFactorEntries,
   };
 })();

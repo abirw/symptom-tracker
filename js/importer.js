@@ -1,5 +1,5 @@
 /**
- * Parsing for the Import feature. Four input shapes, all handled here as
+ * Parsing for the Import feature. Five input shapes, all handled here as
  * pure functions (no DOM, no IndexedDB) so the Data view (data.js) only has
  * to render what these return and let the user confirm:
  *
@@ -15,6 +15,8 @@
  *    list rather than something committed straight to the DB.
  *  - parseTemperatureFile: one daily reading per line (`YYYY-MM-DD` then a
  *    decimal value), for the separate "Import Temperature Data" section.
+ *  - parseFactorLogFile: one factor occurrence per line (`YYYY-MM-DD <name>`),
+ *    or a date range on one line, for the "Import Factor Log" section.
  */
 const Importer = (() => {
   // ---- JSON backup (mirrors export.js's exportJson payload shape) ----
@@ -316,5 +318,77 @@ const Importer = (() => {
     return { readings: [...byDate.values()], skippedCount };
   }
 
-  return { parseJsonBackup, csvToEntries, parseTextToCandidates, parseTemperatureFile };
+  // ---- Factor log ----
+
+  const FACTOR_RANGE_LINE_RE = /^(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})\s+(.+)$/i;
+  const FACTOR_SINGLE_LINE_RE = /^(\d{4}-\d{2}-\d{2})\s+(.+)$/;
+
+  /** Every calendar date from `startStr` to `endStr`, inclusive, as `YYYY-MM-DD` strings. */
+  function dateRangeStrings(startStr, endStr) {
+    const [sy, sm, sd] = startStr.split("-").map(Number);
+    const [ey, em, ed] = endStr.split("-").map(Number);
+    const cur = new Date(sy, sm - 1, sd);
+    const end = new Date(ey, em - 1, ed);
+    const dates = [];
+    while (cur.getTime() <= end.getTime()) {
+      dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`);
+      cur.setDate(cur.getDate() + 1);
+    }
+    return dates;
+  }
+
+  /**
+   * Parses a plain-text factor log. Each non-blank line is either a single
+   * day (`YYYY-MM-DD <name>`, e.g. "2026-07-21 period") or an explicit range
+   * (`YYYY-MM-DD to YYYY-MM-DD <name>`, e.g. "2026-07-21 to 2026-07-25 period"),
+   * which is expanded into one entry per day, inclusive - factors are always
+   * logged as individual days (see db.js), never stored as a date range.
+   * A reversed range (end before start) or an unparseable date is skipped
+   * and counted rather than aborting the whole file. Same date+name repeated
+   * within the file (including via overlapping ranges) is deduped to one entry.
+   * @param {string} text
+   * @returns {{entries: {date: string, name: string}[], skippedCount: number}}
+   */
+  function parseFactorLogFile(text) {
+    const seen = new Set(); // `${date}|${name}` - dedupes within the file
+    const entries = [];
+    let skippedCount = 0;
+
+    const addEntry = (date, rawName) => {
+      const name = rawName.trim();
+      const key = `${date}|${name}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      entries.push({ date, name });
+    };
+
+    text.split(/\r?\n/).forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      const rangeMatch = trimmed.match(FACTOR_RANGE_LINE_RE);
+      if (rangeMatch) {
+        const [, startStr, endStr, name] = rangeMatch;
+        const start = new Date(startStr);
+        const end = new Date(endStr);
+        if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+          skippedCount++;
+          return;
+        }
+        dateRangeStrings(startStr, endStr).forEach((date) => addEntry(date, name));
+        return;
+      }
+
+      const singleMatch = trimmed.match(FACTOR_SINGLE_LINE_RE);
+      if (!singleMatch || isNaN(new Date(singleMatch[1]).getTime())) {
+        skippedCount++;
+        return;
+      }
+      addEntry(singleMatch[1], singleMatch[2]);
+    });
+
+    return { entries, skippedCount };
+  }
+
+  return { parseJsonBackup, csvToEntries, parseTextToCandidates, parseTemperatureFile, parseFactorLogFile };
 })();

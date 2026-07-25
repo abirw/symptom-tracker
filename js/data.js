@@ -1,5 +1,5 @@
 /**
- * Data view: Export (JSON/CSV via the iOS share sheet) plus Import, in four
+ * Data view: Export (JSON/CSV via the iOS share sheet) plus Import, in five
  * flavors:
  *  - Restore a JSON backup (this app's own export format, full fidelity).
  *  - Bulk-import a CSV (this app's own export columns, or a hand-made one
@@ -10,6 +10,9 @@
  *  - Import daily temperature readings (`YYYY-MM-DD    value` per line),
  *    stored as-is for Trends' Temperature chart, and optionally
  *    auto-flagged as "Heatwave" factor entries above a threshold you set.
+ *  - Import a factor log (`YYYY-MM-DD <name>`, or a `YYYY-MM-DD to
+ *    YYYY-MM-DD <name>` range expanded into daily entries) - the bulk
+ *    alternative to logging each day one at a time in the Log tab.
  */
 const DataView = (() => {
   let container;
@@ -20,6 +23,7 @@ const DataView = (() => {
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
   let pendingTemperatureImport = null; // { readings, skippedCount } awaiting confirmation
+  let pendingFactorLogImport = null; // { entries, skippedCount } awaiting confirmation
 
   // ---- Export ----
 
@@ -633,6 +637,86 @@ const DataView = (() => {
     }
   }
 
+  // ---- Import: factor log ----
+
+  /** Rebuilds the parsed-file summary line for the factor log preview. */
+  function renderFactorLogSummary() {
+    if (!pendingFactorLogImport) return;
+    const { entries, skippedCount } = pendingFactorLogImport;
+    const factorCount = new Set(entries.map((e) => e.name)).size;
+
+    let summary = `${entries.length} ${entries.length === 1 ? "entry" : "entries"} found across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}`;
+    if (skippedCount > 0) summary += ` (${skippedCount} ${skippedCount === 1 ? "line" : "lines"} skipped)`;
+    summary += ".";
+    container.querySelector("#import-factorlog-summary").textContent = summary;
+  }
+
+  async function handleFactorLogFile(file) {
+    const statusEl = container.querySelector("#import-factorlog-status");
+    const previewEl = container.querySelector("#import-factorlog-preview");
+    previewEl.hidden = true;
+    pendingFactorLogImport = null;
+    statusEl.textContent = "Reading file…";
+
+    try {
+      const text = await file.text();
+      const { entries, skippedCount } = Importer.parseFactorLogFile(text);
+      if (entries.length === 0) {
+        // Same "show what was actually read" diagnostic as the temperature
+        // import - makes a format/delimiter mismatch visible without devtools.
+        const firstLine = text.split(/\r?\n/).find((l) => l.trim()) || "(file appears to be empty)";
+        statusEl.textContent = `Couldn't find any valid entries in that file (${text.length} characters read). First line: "${firstLine.slice(0, 80)}"`;
+        return;
+      }
+
+      pendingFactorLogImport = { entries, skippedCount };
+      statusEl.textContent = "";
+      renderFactorLogSummary();
+      previewEl.hidden = false;
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Couldn't read that file.";
+    }
+  }
+
+  /** Runs the actual import - no confirm() dialog, same reasoning as the other imports (purely additive, nothing to warn about). */
+  async function confirmFactorLogImport() {
+    if (!pendingFactorLogImport) return;
+    const btn = container.querySelector("#import-factorlog-confirm-btn");
+    const statusEl = container.querySelector("#import-factorlog-status");
+    const { entries } = pendingFactorLogImport;
+
+    btn.disabled = true;
+    btn.textContent = "Importing…";
+
+    try {
+      const existingDayNamePairs = new Set(
+        (await DB.getAllFactorEntries()).map((e) => `${Analysis.dayKey(e.timestamp)}|${e.name}`)
+      );
+      const newEntries = entries
+        .filter((e) => !existingDayNamePairs.has(`${e.date}|${e.name}`))
+        .map((e) => ({ name: e.name, timestamp: new Date(`${e.date}T12:00:00`).toISOString() }));
+
+      await DB.bulkImportFactorEntries(newEntries);
+
+      const skippedAsDuplicate = entries.length - newEntries.length;
+      const factorCount = new Set(newEntries.map((e) => e.name)).size;
+      statusEl.textContent =
+        skippedAsDuplicate > 0
+          ? `Imported ${newEntries.length} new factor entries across ${factorCount} ${factorCount === 1 ? "factor" : "factors"} (${skippedAsDuplicate} already logged, skipped).`
+          : `Imported ${newEntries.length} new factor entries across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}.`;
+      container.querySelector("#import-factorlog-preview").hidden = true;
+      container.querySelector("#import-factorlog-file").value = "";
+      pendingFactorLogImport = null;
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Import failed partway through.";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Import";
+    }
+  }
+
   // ---- Manage Tags ----
 
   async function loadTagUsage() {
@@ -833,6 +917,23 @@ const DataView = (() => {
           <button type="button" id="import-temperature-confirm-btn" class="primary-btn">Import</button>
         </div>
       </div>
+
+      <hr class="section-divider" />
+      <h2 class="section-heading">Import Factor Log</h2>
+      <p class="export-note" style="margin-top: 0">
+        One entry per line: a date and a factor name (e.g. "2026-07-21 period"), or a range on one
+        line (e.g. "2026-07-21 to 2026-07-25 period") to log every day in between. Existing factor
+        names are reused; new ones are created automatically.
+      </p>
+      <div class="field">
+        <label for="import-factorlog-file">Factor log (.txt)</label>
+        <input type="file" id="import-factorlog-file" accept=".txt,text/plain" />
+        <p id="import-factorlog-status" class="import-status"></p>
+        <div id="import-factorlog-preview" class="import-preview" hidden>
+          <p id="import-factorlog-summary"></p>
+          <button type="button" id="import-factorlog-confirm-btn" class="primary-btn">Import</button>
+        </div>
+      </div>
     `;
   }
 
@@ -872,6 +973,12 @@ const DataView = (() => {
     });
     container.querySelector("#heatwave-threshold-input").addEventListener("input", renderHeatwaveThresholdPreview);
     container.querySelector("#import-temperature-confirm-btn").addEventListener("click", confirmTemperatureImport);
+
+    container.querySelector("#import-factorlog-file").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) handleFactorLogFile(file);
+    });
+    container.querySelector("#import-factorlog-confirm-btn").addEventListener("click", confirmFactorLogImport);
 
     await loadExportSummary();
     await loadPickerData();
