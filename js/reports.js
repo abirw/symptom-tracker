@@ -9,6 +9,8 @@
  * so "Last 90 days" scopes the whole report, including episode detection.
  * Co-occurring Factors ranks the logged factors (period, heatwaves,
  * medication changes, etc.) active on the same days as the selected symptom.
+ * Predictive Factors is the lagged counterpart - a factor 1-3 days *before*
+ * the symptom, for patterns that show up with a delay rather than same-day.
  */
 const ReportsView = (() => {
   let container;
@@ -337,6 +339,36 @@ const ReportsView = (() => {
     );
   }
 
+  /**
+   * Ranks each factor by its single best predictive lag (1-3 days before
+   * this symptom) - a factor already covered by same-day Co-occurring
+   * Factors above may still show up here too, if it's an even better fit
+   * a day or two ahead of the symptom rather than on the same day.
+   */
+  function renderLaggedFactorCorrelation(bodyEl, pool, tagName, factorPool) {
+    const correlation = Analysis.computeLaggedFactorCorrelation(pool, tagName, factorPool);
+    if (correlation.results.length === 0) return;
+    const rows = correlation.results
+      .slice(0, 8)
+      .map(
+        (item) =>
+          `<div class="cooccur-row"><span class="chip chip-static">${item.name}</span><span class="cooccur-pct">${item.lagDays} ${
+            item.lagDays === 1 ? "day" : "days"
+          } before · ${item.percentOfDays}% of days</span></div>`
+      )
+      .join("");
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="chart-card">
+        <h3>Predictive Factors</h3>
+        <p class="export-note" style="margin-top: 0">
+          Based on a small number of logged days - a pattern here is a lead worth watching, not proof.
+        </p>
+        <div class="cooccur-list">${rows}</div>
+      </div>`
+    );
+  }
+
   function renderClusters(bodyEl, pool, tagName) {
     const clusters = Analysis.computeClusters(pool, tagName, { maxGapDays, minClusterDays: 2 });
     const items = clusters
@@ -524,6 +556,7 @@ const ReportsView = (() => {
     renderStreaksCard(bodyEl, streaks);
     renderCoOccurrence(bodyEl, windowedPool, tagName);
     renderCoOccurringFactors(bodyEl, windowedPool, tagName, windowedFactorEntries);
+    renderLaggedFactorCorrelation(bodyEl, windowedPool, tagName, windowedFactorEntries);
     renderClusters(bodyEl, windowedPool, tagName);
     renderNotesWordFrequency(bodyEl, focusEntries, printMode);
   }

@@ -131,6 +131,55 @@ const Analysis = (() => {
   }
 
   /**
+   * For each factor, checks whether it was active exactly N days before each
+   * of focusTagName's occurrence-days, for N from 1 to maxLagDays, and keeps
+   * whichever lag matches the most days - "this factor is most predictive N
+   * days ahead of this symptom". Lag 0 (same-day) is intentionally excluded;
+   * that's what computeFactorCoOccurrence already covers. A factor that
+   * never precedes the symptom at any tested lag is omitted entirely.
+   */
+  function computeLaggedFactorCorrelation(entries, focusTagName, factorEntries, { maxLagDays = 3 } = {}) {
+    const focusDays = distinctOccurrenceDays(entries, focusTagName);
+    const totalDays = focusDays.length;
+    if (totalDays === 0) return { totalDays: 0, results: [] };
+
+    const factorDaysByName = new Map(); // name -> Set of day keys
+    factorEntries.forEach((f) => {
+      if (!factorDaysByName.has(f.name)) factorDaysByName.set(f.name, new Set());
+      factorDaysByName.get(f.name).add(dayKey(f.timestamp));
+    });
+
+    const results = [];
+    for (const [name, daySet] of factorDaysByName) {
+      let bestLag = null;
+      let bestCount = 0;
+      for (let lag = 1; lag <= maxLagDays; lag++) {
+        const count = focusDays.filter((symptomDay) => {
+          const priorDay = new Date(symptomDay);
+          priorDay.setDate(priorDay.getDate() - lag);
+          return daySet.has(dayKey(priorDay));
+        }).length;
+        if (count > bestCount) {
+          bestCount = count;
+          bestLag = lag;
+        }
+      }
+      if (bestCount > 0) {
+        results.push({
+          name,
+          lagDays: bestLag,
+          count: bestCount,
+          percentOfDays: Math.round((bestCount / totalDays) * 1000) / 10,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.percentOfDays - a.percentOfDays || a.name.localeCompare(b.name));
+
+    return { totalDays, results };
+  }
+
+  /**
    * Distinct-day streak/gap stats for `focusTagName`. `longestGapDays` also
    * considers the current ongoing gap (days since the last occurrence) as a
    * candidate, so "it's been 45 days" can itself be the record. `averageGapDays`
@@ -268,6 +317,7 @@ const Analysis = (() => {
     computeSeverityDistribution,
     computeCoOccurrence,
     computeFactorCoOccurrence,
+    computeLaggedFactorCorrelation,
     computeStreaksAndGaps,
     computeClusters,
     computeNoteWordFrequency,
