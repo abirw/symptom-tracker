@@ -130,6 +130,12 @@ const DB = (() => {
     await promisifyRequest(store.delete(id));
   }
 
+  /** Deletes every entry. Used only by Import's "Replace All" mode - tags/conditions are untouched. */
+  async function clearAllEntries() {
+    const store = await tx("entries", "readwrite");
+    await promisifyRequest(store.clear());
+  }
+
   async function getEntry(id) {
     const store = await tx("entries", "readonly");
     return promisifyRequest(store.get(id));
@@ -299,6 +305,7 @@ const DB = (() => {
     addEntry,
     updateEntry,
     deleteEntry,
+    clearAllEntries,
     getEntry,
     getAllEntries,
     touchTag,

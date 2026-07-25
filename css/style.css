@@ -497,8 +497,34 @@ textarea {
   background: #2fb8a1;
 }
 
+/* Severity color modes (avg/max) reuse the same 1-5 severity scale used
+   elsewhere in the app (chips, badges) - 0 means no severity was logged
+   that day, distinct from no entries at all. */
+.heatmap-day[data-sev-level="0"] {
+  background: var(--surface-raised);
+}
+.heatmap-day[data-sev-level="1"] {
+  background: var(--sev-1);
+}
+.heatmap-day[data-sev-level="2"] {
+  background: var(--sev-2);
+}
+.heatmap-day[data-sev-level="3"] {
+  background: var(--sev-3);
+}
+.heatmap-day[data-sev-level="4"] {
+  background: var(--sev-4);
+}
+.heatmap-day[data-sev-level="5"] {
+  background: var(--sev-5);
+}
+
 .heatmap-day-selected {
   box-shadow: 0 0 0 2px var(--text);
+}
+
+.heatmap-mode-row {
+  margin-bottom: 0.6rem;
 }
 
 .heatmap-legend {
@@ -857,6 +883,16 @@ input[type="file"]::file-selector-button {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.75rem;
+}
+
+.import-mode-row {
+  margin-bottom: 0.75rem;
+}
+
+.import-mode-row .chip[data-import-mode="replace"][aria-pressed="true"] {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #2a0e0b;
 }
 
 .import-preview p {

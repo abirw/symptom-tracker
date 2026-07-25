@@ -35,19 +35,16 @@ const TimelineView = (() => {
       </div>
 
       <div class="heatmap-card">
+        <div class="heatmap-mode-row chip-row">
+          <button type="button" class="chip" data-heatmap-mode="frequency">Frequency</button>
+          <button type="button" class="chip" data-heatmap-mode="avgSeverity">Avg severity</button>
+          <button type="button" class="chip" data-heatmap-mode="maxSeverity">Max severity</button>
+        </div>
         <div class="heatmap-scroll">
           <div id="heatmap-months" class="heatmap-months"></div>
           <div id="heatmap-grid" class="heatmap-grid"></div>
         </div>
-        <div class="heatmap-legend">
-          <span>Less</span>
-          <span class="heatmap-day" data-level="0"></span>
-          <span class="heatmap-day" data-level="1"></span>
-          <span class="heatmap-day" data-level="2"></span>
-          <span class="heatmap-day" data-level="3"></span>
-          <span class="heatmap-day" data-level="4"></span>
-          <span>More</span>
-        </div>
+        <div id="heatmap-legend" class="heatmap-legend"></div>
       </div>
 
       <p id="day-filter-note" class="day-filter-note" hidden></p>
@@ -194,13 +191,91 @@ const TimelineView = (() => {
     return weeks;
   }
 
-  /** Maps a raw entry count to one of the heatmap's 5 color intensity levels. */
+  /** Maps a raw entry count to one of the heatmap's frequency-mode color levels (0-4). */
   function levelForCount(count) {
     if (count <= 0) return 0;
     if (count === 1) return 1;
     if (count === 2) return 2;
     if (count === 3) return 3;
     return 4;
+  }
+
+  /** Per-day entry count + severities (whichever the current color mode needs), keyed by dateKey. */
+  function computeHeatmapDayStats() {
+    const stats = new Map();
+    getTagConditionFiltered().forEach((e) => {
+      const key = dateKey(new Date(e.timestamp));
+      if (!stats.has(key)) stats.set(key, { count: 0, severities: [] });
+      const day = stats.get(key);
+      day.count++;
+      if (e.severity != null) day.severities.push(e.severity);
+    });
+    return stats;
+  }
+
+  /**
+   * Resolves one day's color level + tooltip for the current heatmap color
+   * mode. Frequency reuses the existing 0-4 count-based levels; the two
+   * severity modes reuse the app's 1-5 severity color scale directly (level
+   * 0 means no severity was logged that day, distinct from no entries at all).
+   */
+  function describeHeatmapDay(stats, mode, dateLabel) {
+    const count = stats ? stats.count : 0;
+    const entryWord = count === 1 ? "entry" : "entries";
+
+    if (mode === "frequency") {
+      return { attr: "level", level: levelForCount(count), title: `${count} ${entryWord} on ${dateLabel}` };
+    }
+
+    const severities = stats ? stats.severities : [];
+    if (severities.length === 0) {
+      const suffix = count > 0 ? ` (${count} ${entryWord}, no severity logged)` : "";
+      return { attr: "sevLevel", level: 0, title: `No severity data on ${dateLabel}${suffix}` };
+    }
+
+    const value =
+      mode === "avgSeverity" ? severities.reduce((a, b) => a + b, 0) / severities.length : Math.max(...severities);
+    const level = Math.max(1, Math.min(5, Math.round(value)));
+    const label = mode === "avgSeverity" ? "avg severity" : "max severity";
+    const valueLabel = mode === "avgSeverity" ? value.toFixed(1) : String(value);
+    return { attr: "sevLevel", level, title: `${label} ${valueLabel} (${count} ${entryWord}) on ${dateLabel}` };
+  }
+
+  /** Rebuilds the "Less/More" or "Mild/Severe" legend swatches to match the current color mode. */
+  function renderHeatmapLegend() {
+    const legendEl = container.querySelector("#heatmap-legend");
+    const mode = Settings.get("heatmapColorMode");
+    legendEl.innerHTML = "";
+
+    const startLabel = document.createElement("span");
+    const endLabel = document.createElement("span");
+    const swatchCount = mode === "frequency" ? 5 : 6; // frequency: levels 0-4; severity: levels 0-5
+    const attr = mode === "frequency" ? "level" : "sevLevel";
+
+    if (mode === "frequency") {
+      startLabel.textContent = "Less";
+      endLabel.textContent = "More";
+    } else {
+      startLabel.textContent = "Mild";
+      endLabel.textContent = "Severe";
+    }
+
+    legendEl.appendChild(startLabel);
+    for (let i = 0; i < swatchCount; i++) {
+      const swatch = document.createElement("span");
+      swatch.className = "heatmap-day";
+      swatch.dataset[attr] = String(i);
+      legendEl.appendChild(swatch);
+    }
+    legendEl.appendChild(endLabel);
+  }
+
+  /** Keeps the Frequency/Avg severity/Max severity chips in sync with the current color mode. */
+  function syncHeatmapModeChips() {
+    const mode = Settings.get("heatmapColorMode");
+    container.querySelectorAll(".heatmap-mode-row .chip").forEach((chip) => {
+      chip.setAttribute("aria-pressed", chip.dataset.heatmapMode === mode ? "true" : "false");
+    });
   }
 
   /** Shows/hides the "Showing <date> only · Clear" banner above the list. */
@@ -236,19 +311,19 @@ const TimelineView = (() => {
     noteEl.appendChild(clearBtn);
   }
 
-  /** Rebuilds the full heatmap grid + month labels from the current tag/condition filters. */
+  /** Rebuilds the full heatmap grid + month labels from the current tag/condition filters and color mode. */
   function renderHeatmap() {
     const gridEl = container.querySelector("#heatmap-grid");
     const monthsEl = container.querySelector("#heatmap-months");
     gridEl.innerHTML = "";
     monthsEl.innerHTML = "";
 
+    syncHeatmapModeChips();
+    renderHeatmapLegend();
+
+    const mode = Settings.get("heatmapColorMode");
     const weeks = buildHeatmapWeeks();
-    const counts = new Map();
-    getTagConditionFiltered().forEach((e) => {
-      const key = dateKey(new Date(e.timestamp));
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
+    const dayStats = computeHeatmapDayStats();
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -282,13 +357,10 @@ const TimelineView = (() => {
           btn.classList.add("heatmap-day-empty");
           btn.disabled = true;
         } else {
-          const count = counts.get(key) || 0;
-          btn.dataset.level = String(levelForCount(count));
-          btn.title = `${count} ${count === 1 ? "entry" : "entries"} on ${date.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}`;
+          const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+          const { attr, level, title } = describeHeatmapDay(dayStats.get(key), mode, dateLabel);
+          btn.dataset[attr] = String(level);
+          btn.title = title;
           if (key === selectedDay) btn.classList.add("heatmap-day-selected");
           btn.addEventListener("click", () => {
             selectedDay = selectedDay === key ? null : key; // tap again to clear
@@ -529,6 +601,13 @@ const TimelineView = (() => {
       filterCondition = e.target.value;
       renderHeatmap();
       renderList();
+    });
+
+    container.querySelectorAll(".heatmap-mode-row .chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        Settings.set("heatmapColorMode", chip.dataset.heatmapMode);
+        renderHeatmap(); // also re-syncs the mode chips + legend
+      });
     });
 
     modalTagField = TagPickerField.create(container.querySelector("#modal-tags-field"), {

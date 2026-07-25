@@ -7,6 +7,7 @@ const Settings = (() => {
   const STORAGE_KEY = "symptom-tracker:settings";
   const DEFAULTS = {
     tagPickerMode: "classic", // "classic" | "smart"
+    heatmapColorMode: "frequency", // "frequency" | "avgSeverity" | "maxSeverity"
   };
 
   function load() {

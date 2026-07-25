@@ -13,6 +13,7 @@ const DataView = (() => {
   let allTags = [];
   let allConditions = [];
   let pendingStructuredImport = null; // { entries, tags, conditions } awaiting confirmation
+  let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
 
@@ -130,11 +131,46 @@ const DataView = (() => {
 
   // ---- Import: structured (JSON backup or CSV) ----
 
+  function syncStructuredImportModeChips() {
+    container.querySelectorAll(".import-mode-row .chip").forEach((chip) => {
+      chip.setAttribute("aria-pressed", chip.dataset.importMode === structuredImportMode ? "true" : "false");
+    });
+  }
+
+  /** Rebuilds the summary text under the mode chips - depends on both the parsed file and the append/replace choice. */
+  async function renderStructuredImportSummary() {
+    if (!pendingStructuredImport) return;
+    const { entries, tags, conditions } = pendingStructuredImport;
+
+    const parts = [`${entries.length} ${entries.length === 1 ? "entry" : "entries"}`];
+    if (tags.length) parts.push(`${tags.length} ${tags.length === 1 ? "tag" : "tags"}`);
+    if (conditions.length) parts.push(`${conditions.length} ${conditions.length === 1 ? "condition" : "conditions"}`);
+    const found = `Found ${parts.join(", ")}.`;
+
+    let action;
+    if (structuredImportMode === "replace") {
+      const currentCount = (await DB.getAllEntries()).length;
+      action =
+        currentCount > 0
+          ? `This will permanently delete all ${currentCount} existing ${
+              currentCount === 1 ? "entry" : "entries"
+            } and replace them with the ${entries.length} from this file.`
+          : `This will import the ${entries.length} entries from this file (nothing existing to replace yet).`;
+    } else {
+      action =
+        "This adds to what's already stored - entries sharing an id with one you already have are updated in place, not duplicated. Entries you deleted from the file are NOT removed; use Replace All for that.";
+    }
+
+    container.querySelector("#import-structured-summary").textContent = `${found} ${action}`;
+  }
+
   async function handleStructuredFile(file) {
     const statusEl = container.querySelector("#import-structured-status");
     const previewEl = container.querySelector("#import-structured-preview");
     previewEl.hidden = true;
     pendingStructuredImport = null;
+    structuredImportMode = "append";
+    syncStructuredImportModeChips();
     statusEl.textContent = "Reading file…";
 
     try {
@@ -150,13 +186,7 @@ const DataView = (() => {
 
       pendingStructuredImport = { entries, tags, conditions };
       statusEl.textContent = "";
-
-      const parts = [`${entries.length} ${entries.length === 1 ? "entry" : "entries"}`];
-      if (tags.length) parts.push(`${tags.length} ${tags.length === 1 ? "tag" : "tags"}`);
-      if (conditions.length) parts.push(`${conditions.length} ${conditions.length === 1 ? "condition" : "conditions"}`);
-      container.querySelector("#import-structured-summary").textContent =
-        `Found ${parts.join(", ")}. Importing adds these to what's already stored ` +
-        `(entries sharing an id with one you already have are updated, not duplicated).`;
+      await renderStructuredImportSummary();
       previewEl.hidden = false;
     } catch (err) {
       console.error(err);
@@ -168,18 +198,35 @@ const DataView = (() => {
     if (!pendingStructuredImport) return;
     const btn = container.querySelector("#import-structured-confirm-btn");
     const statusEl = container.querySelector("#import-structured-status");
+    const { entries, tags, conditions } = pendingStructuredImport;
+    const isReplace = structuredImportMode === "replace";
+
+    if (isReplace) {
+      const currentCount = (await DB.getAllEntries()).length;
+      const ok = confirm(
+        currentCount > 0
+          ? `Delete all ${currentCount} existing ${currentCount === 1 ? "entry" : "entries"} and replace with ` +
+              `${entries.length} from this file? This can't be undone.`
+          : `Import ${entries.length} ${entries.length === 1 ? "entry" : "entries"} from this file?`
+      );
+      if (!ok) return;
+    }
+
     btn.disabled = true;
     btn.textContent = "Importing…";
 
     try {
-      const { entries, tags, conditions } = pendingStructuredImport;
-
       for (const t of tags) {
         await DB.mergeTagRecord(t);
       }
       for (const c of conditions) {
         await DB.mergeConditionRecord(c);
       }
+
+      if (isReplace) {
+        await DB.clearAllEntries();
+      }
+
       for (const e of entries) {
         for (const name of e.tags || []) {
           await DB.touchTag(name, e.timestamp);
@@ -190,7 +237,9 @@ const DataView = (() => {
         await DB.updateEntry({ ...e, id: e.id || DB.uuid() });
       }
 
-      statusEl.textContent = `Imported ${entries.length} ${entries.length === 1 ? "entry" : "entries"}.`;
+      statusEl.textContent = `${isReplace ? "Replaced all entries with" : "Imported"} ${entries.length} ${
+        entries.length === 1 ? "entry" : "entries"
+      }.`;
       container.querySelector("#import-structured-preview").hidden = true;
       container.querySelector("#import-structured-file").value = "";
       pendingStructuredImport = null;
@@ -596,11 +645,19 @@ const DataView = (() => {
 
       <hr class="section-divider" />
       <h2 class="section-heading">Restore a backup</h2>
+      <p class="export-note" style="margin-top: 0">
+        Round-trips with Export above: export JSON, edit it (fix a note, remove an entry, tweak a
+        tag), then import it back here.
+      </p>
       <div class="field">
         <label for="import-structured-file">JSON backup or CSV</label>
         <input type="file" id="import-structured-file" accept=".json,.csv,application/json,text/csv" />
         <p id="import-structured-status" class="import-status"></p>
         <div id="import-structured-preview" class="import-preview" hidden>
+          <div class="import-mode-row chip-row">
+            <button type="button" class="chip" data-import-mode="append" aria-pressed="true">Append</button>
+            <button type="button" class="chip" data-import-mode="replace" aria-pressed="false">Replace All</button>
+          </div>
           <p id="import-structured-summary"></p>
           <button type="button" id="import-structured-confirm-btn" class="primary-btn">Import</button>
         </div>
@@ -640,6 +697,13 @@ const DataView = (() => {
       if (file) handleStructuredFile(file);
     });
     container.querySelector("#import-structured-confirm-btn").addEventListener("click", confirmStructuredImport);
+    container.querySelectorAll(".import-mode-row .chip").forEach((chip) => {
+      chip.addEventListener("click", async () => {
+        structuredImportMode = chip.dataset.importMode;
+        syncStructuredImportModeChips();
+        await renderStructuredImportSummary();
+      });
+    });
 
     container.querySelector("#import-text-file").addEventListener("change", (e) => {
       const file = e.target.files[0];
