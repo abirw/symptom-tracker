@@ -568,7 +568,11 @@ const DataView = (() => {
       const text = await file.text();
       const { readings, skippedCount } = Importer.parseTemperatureFile(text);
       if (readings.length === 0) {
-        statusEl.textContent = "Couldn't find any valid readings in that file.";
+        // Surface what was actually read (not just "it didn't work") - the
+        // most common cause is the file's real delimiter/format not matching
+        // what was expected, which this makes visible without needing devtools.
+        const firstLine = text.split(/\r?\n/).find((l) => l.trim()) || "(file appears to be empty)";
+        statusEl.textContent = `Couldn't find any valid readings in that file (${text.length} characters read). First line: "${firstLine.slice(0, 80)}"`;
         return;
       }
 
