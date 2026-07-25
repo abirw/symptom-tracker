@@ -36,18 +36,20 @@ const ReportsView = (() => {
 
   function render() {
     container.innerHTML = `
-      <div class="field">
-        <label>Symptom</label>
-        <div id="reports-tag-chips" class="chip-row"></div>
-      </div>
-      <div class="field">
-        <label>Condition</label>
-        <div id="reports-condition-chips" class="chip-row"></div>
-      </div>
-      <div class="filter-bar">
-        <select id="reports-range">
-          ${RANGE_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
-        </select>
+      <div class="no-print">
+        <div class="field">
+          <label>Symptom</label>
+          <div id="reports-tag-chips" class="chip-row"></div>
+        </div>
+        <div class="field">
+          <label>Condition</label>
+          <div id="reports-condition-chips" class="chip-row"></div>
+        </div>
+        <div class="filter-bar">
+          <select id="reports-range">
+            ${RANGE_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
+          </select>
+        </div>
       </div>
       <div id="reports-tracking-note" class="tracking-note" hidden></div>
       <p id="reports-empty" class="placeholder" hidden></p>
@@ -166,6 +168,29 @@ const ReportsView = (() => {
   function formatDays(n) {
     if (n == null) return "—";
     return `${n} ${n === 1 ? "day" : "days"}`;
+  }
+
+  /**
+   * A clear, static statement of what this report actually is - the
+   * interactive filter chips above are hidden from print (raw pickers don't
+   * read well on paper), so this is what makes the symptom/condition/range
+   * combination visible in the exported PDF, not just on screen.
+   */
+  function renderReportHeader(bodyEl, tagName) {
+    const rangeOption = RANGE_OPTIONS.find((o) => o.value === selectedRange);
+    const parts = [];
+    if (selectedConditionNames.size > 0) {
+      parts.push(`Condition: ${[...selectedConditionNames].join(", ")}`);
+    }
+    if (rangeOption) parts.push(rangeOption.label);
+
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="report-header">
+        <h2 class="report-header-title">${tagName || "Overview"}</h2>
+        ${parts.length ? `<p class="report-header-subtitle">${parts.join(" · ")}</p>` : ""}
+      </div>`
+    );
   }
 
   // --- Section builders ---
@@ -455,6 +480,7 @@ const ReportsView = (() => {
     }
 
     const tagName = [...selectedTagName][0] || null;
+    renderReportHeader(bodyEl, tagName);
     const pool = conditionFilteredPool();
     const { start, end, tagFirstUsed } = computeWindow(tagName);
     const windowedPool = pool.filter((e) => {

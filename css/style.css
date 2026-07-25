@@ -985,6 +985,22 @@ input[type="file"]::file-selector-button {
 
 /* --- Reports --- */
 
+.report-header {
+  margin-bottom: 1rem;
+}
+
+.report-header-title {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.report-header-subtitle {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1140,7 +1156,8 @@ input[type="file"]::file-selector-button {
   .word-freq-meta,
   .word-trend-title,
   .cooccur-pct,
-  .tracking-note {
+  .tracking-note,
+  .report-header-subtitle {
     color: #444444;
   }
 
