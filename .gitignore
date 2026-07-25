@@ -4,3 +4,6 @@
 # Defensive: never let a manual data export land in the repo.
 symptom-tracker-export-*.json
 symptom-tracker-export-*.csv
+
+# Scratch space for local testing files (e.g. sample import data) - never committed.
+scratch/
