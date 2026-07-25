@@ -70,6 +70,19 @@
         console.error("Service worker registration failed:", err);
       });
     });
+
+    // sw.js calls skipWaiting()/clients.claim() so a new deploy takes over an
+    // already-open tab automatically, but that alone leaves the *page's*
+    // already-loaded JS stale until a real reload happens - which is exactly
+    // what made a fixed bug look unfixed (an open tab kept running the old
+    // code even though the server had the new version). Reload once, right
+    // when the new worker actually takes control, so this can't recur.
+    let reloadedForUpdate = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloadedForUpdate) return;
+      reloadedForUpdate = true;
+      window.location.reload();
+    });
   }
 
   /** Wires the header gear icon's Settings sheet (app-shell chrome, not tied to any one tab). */
