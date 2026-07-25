@@ -17,6 +17,7 @@ const Analysis = (() => {
     "these", "those", "from", "get", "got", "went", "going", "day", "days",
     "today", "yesterday", "felt", "feel", "feeling", "like", "really", "quite",
     "bit", "little", "lot", "one", "two", "around", "again",
+    "trying", "few", "episodes", "episode",
   ]);
 
   /** Local (not UTC) midnight for `date`, used to compare/bucket by calendar day. */

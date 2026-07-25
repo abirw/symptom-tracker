@@ -323,11 +323,12 @@ const ReportsView = (() => {
 
     const rows = result.words
       .map((w) => {
-        const delta =
+        const countText = `${w.count} ${w.count === 1 ? "entry" : "entries"}`;
+        const meta =
           w.avgSeverityWithWord != null && result.overallAvgSeverity != null
-            ? `avg severity ${w.avgSeverityWithWord} vs overall ${result.overallAvgSeverity}`
-            : `mentioned in ${w.count} ${w.count === 1 ? "entry" : "entries"}`;
-        return `<button type="button" class="word-freq-row" data-word="${w.word}"><span class="word-freq-word">${w.word}</span><span class="word-freq-meta">${delta}</span></button>`;
+            ? `${countText} · avg severity ${w.avgSeverityWithWord} vs overall ${result.overallAvgSeverity}`
+            : countText;
+        return `<button type="button" class="word-freq-row" data-word="${w.word}"><span class="word-freq-word">${w.word}</span><span class="word-freq-meta">${meta}</span></button>`;
       })
       .join("");
 
