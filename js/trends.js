@@ -16,6 +16,11 @@
  * doesn't filter the symptom data at all - selecting one just adds a "Factor
  * Activity" chart-card sharing the exact same bucket window as whatever's
  * already plotted, so the two can be visually compared side by side.
+ *
+ * Imported temperature readings (Data tab's "Import Temperature Data") get
+ * the same treatment: an always-on "Temperature" chart-card (bucket-averaged,
+ * not summed) that only appears when at least one reading falls in the
+ * current window - no filter toggle needed since there's just one series.
  */
 const TrendsView = (() => {
   let container;
@@ -24,6 +29,7 @@ const TrendsView = (() => {
   let conditions = [];
   let factors = [];
   let factorEntries = [];
+  let temperatures = [];
   let selectedTagNames = new Set();
   let selectedConditionNames = new Set();
   let selectedFactorNames = new Set();
@@ -31,6 +37,7 @@ const TrendsView = (() => {
   let freqChart = null;
   let sevChart = null;
   let factorChart = null;
+  let temperatureChart = null;
 
   const RANGE_OPTIONS = [
     { value: "30", label: "Last 30 days" },
@@ -71,6 +78,10 @@ const TrendsView = (() => {
       <div class="chart-card">
         <h3>Severity</h3>
         <div class="chart-wrap"><canvas id="sev-chart"></canvas></div>
+      </div>
+      <div class="chart-card" id="temperature-chart-card" hidden>
+        <h3>Temperature</h3>
+        <div class="chart-wrap"><canvas id="temperature-chart"></canvas></div>
       </div>
       <div class="chart-card" id="factor-chart-card" hidden>
         <h3>Factor Activity</h3>
@@ -186,6 +197,10 @@ const TrendsView = (() => {
     if (factorChart) {
       factorChart.destroy();
       factorChart = null;
+    }
+    if (temperatureChart) {
+      temperatureChart.destroy();
+      temperatureChart = null;
     }
   }
 
@@ -380,6 +395,61 @@ const TrendsView = (() => {
   }
 
   /**
+   * Renders (or hides) the Temperature chart-card: readings averaged (not
+   * summed) into the SAME buckets as the Frequency/Severity charts, so it
+   * lines up on the same x-axis. Always-on rather than filter-gated - there's
+   * only one series, unlike multi-select Factors - and hides itself whenever
+   * no imported reading falls inside the current window.
+   */
+  function renderTemperatureChart(windowInfo) {
+    const card = container.querySelector("#temperature-chart-card");
+    if (!windowInfo || temperatures.length === 0) {
+      card.hidden = true;
+      return;
+    }
+
+    const { granularity, buckets, labels } = windowInfo;
+    const sums = buckets.map(() => 0);
+    const counts = buckets.map(() => 0);
+
+    temperatures.forEach((t) => {
+      const date = new Date(`${t.date}T12:00:00`); // noon-anchored: a date-only value, no real time-of-day
+      const key = granularity === "week" ? Bucketing.bucketKeyWeek(date) : Bucketing.bucketKeyMonth(date);
+      const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
+      if (idx === -1) return;
+      sums[idx] += t.value;
+      counts[idx]++;
+    });
+
+    if (counts.every((c) => c === 0)) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+
+    const averages = buckets.map((_, i) => (counts[i] ? +(sums[i] / counts[i]).toFixed(1) : null));
+
+    temperatureChart = new Chart(container.querySelector("#temperature-chart").getContext("2d"), {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Avg temperature",
+            data: averages,
+            borderColor: SERIES_COLORS[2],
+            backgroundColor: SERIES_COLORS[2],
+            spanGaps: false,
+            tension: 0.25,
+            pointRadius: 3,
+          },
+        ],
+      },
+      options: chartOptions({ beginAtZero: false }, false),
+    });
+  }
+
+  /**
    * Renders (or hides) the Factor Activity chart-card: one bar series per
    * selected factor, counted into the SAME buckets as whatever the
    * Frequency/Severity charts just rendered, so the two are visually
@@ -433,6 +503,7 @@ const TrendsView = (() => {
       emptyEl.textContent = "No entries yet — log a few to see trends.";
       freqCard.hidden = true;
       sevCard.hidden = true;
+      container.querySelector("#temperature-chart-card").hidden = true;
       container.querySelector("#factor-chart-card").hidden = true;
       return;
     }
@@ -448,16 +519,18 @@ const TrendsView = (() => {
         ? renderCompareMode(pool, selected, noteEl, emptyEl)
         : renderSingleMode(pool, selected[0] || null, noteEl, emptyEl);
 
+    renderTemperatureChart(windowInfo);
     renderFactorActivity(windowInfo);
   }
 
   async function loadData() {
-    [entries, tags, conditions, factors, factorEntries] = await Promise.all([
+    [entries, tags, conditions, factors, factorEntries, temperatures] = await Promise.all([
       DB.getAllEntries(),
       DB.getAllTags(),
       DB.getAllConditions(),
       DB.getAllFactors(),
       DB.getAllFactorEntries(),
+      DB.getAllTemperatures(),
     ]);
     populateFilterChips();
     renderCharts();

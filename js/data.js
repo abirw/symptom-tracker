@@ -1,5 +1,5 @@
 /**
- * Data view: Export (JSON/CSV via the iOS share sheet) plus Import, in three
+ * Data view: Export (JSON/CSV via the iOS share sheet) plus Import, in four
  * flavors:
  *  - Restore a JSON backup (this app's own export format, full fidelity).
  *  - Bulk-import a CSV (this app's own export columns, or a hand-made one
@@ -7,6 +7,9 @@
  *  - Extract entries from a plain-text journal via a local heuristic
  *    (js/importer.js) - never sent anywhere, and always shown as a
  *    review-before-import list since the guesses won't always be right.
+ *  - Import daily temperature readings (`YYYY-MM-DD    value` per line),
+ *    stored as-is for Trends' Temperature chart, and optionally
+ *    auto-flagged as "Heatwave" factor entries above a threshold you set.
  */
 const DataView = (() => {
   let container;
@@ -16,6 +19,7 @@ const DataView = (() => {
   let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
+  let pendingTemperatureImport = null; // { readings, skippedCount } awaiting confirmation
 
   // ---- Export ----
 
@@ -513,6 +517,118 @@ const DataView = (() => {
     }
   }
 
+  // ---- Import: temperature log ----
+
+  function formatTemperature(n) {
+    return Number.isInteger(n) ? String(n) : n.toFixed(1);
+  }
+
+  /** Rebuilds the parsed-file summary line - depends only on the parsed readings, not the threshold. */
+  function renderTemperatureSummary() {
+    if (!pendingTemperatureImport) return;
+    const { readings, skippedCount } = pendingTemperatureImport;
+    const values = readings.map((r) => r.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const avg = values.reduce((s, v) => s + v, 0) / values.length;
+
+    let summary = `${readings.length} ${readings.length === 1 ? "reading" : "readings"} found`;
+    if (skippedCount > 0) summary += ` (${skippedCount} ${skippedCount === 1 ? "line" : "lines"} skipped)`;
+    summary += `. Range: ${formatTemperature(min)}° to ${formatTemperature(max)}°, avg ${formatTemperature(avg)}°.`;
+    container.querySelector("#import-temperature-summary").textContent = summary;
+  }
+
+  /** Rebuilds the "K of N days would be flagged" preview - depends on both the parsed file and the threshold input. */
+  function renderHeatwaveThresholdPreview() {
+    if (!pendingTemperatureImport) return;
+    const previewEl = container.querySelector("#heatwave-threshold-preview");
+    const raw = container.querySelector("#heatwave-threshold-input").value;
+    if (raw === "") {
+      previewEl.textContent = "No threshold set - only raw values will be stored.";
+      return;
+    }
+    const threshold = Number(raw);
+    if (isNaN(threshold)) {
+      previewEl.textContent = "";
+      return;
+    }
+    const flaggedCount = pendingTemperatureImport.readings.filter((r) => r.value >= threshold).length;
+    previewEl.textContent = `${flaggedCount} of ${pendingTemperatureImport.readings.length} days would be flagged as Heatwave.`;
+  }
+
+  async function handleTemperatureFile(file) {
+    const statusEl = container.querySelector("#import-temperature-status");
+    const previewEl = container.querySelector("#import-temperature-preview");
+    previewEl.hidden = true;
+    pendingTemperatureImport = null;
+    container.querySelector("#heatwave-threshold-input").value = "";
+    statusEl.textContent = "Reading file…";
+
+    try {
+      const text = await file.text();
+      const { readings, skippedCount } = Importer.parseTemperatureFile(text);
+      if (readings.length === 0) {
+        statusEl.textContent = "Couldn't find any valid readings in that file.";
+        return;
+      }
+
+      pendingTemperatureImport = { readings, skippedCount };
+      statusEl.textContent = "";
+      renderTemperatureSummary();
+      renderHeatwaveThresholdPreview();
+      previewEl.hidden = false;
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Couldn't read that file.";
+    }
+  }
+
+  /**
+   * Runs the actual import - same no-confirm()-dialog reasoning as
+   * confirmStructuredImport: the effect of the threshold is already shown
+   * live in the preview text above, so there's nothing left to confirm.
+   */
+  async function confirmTemperatureImport() {
+    if (!pendingTemperatureImport) return;
+    const btn = container.querySelector("#import-temperature-confirm-btn");
+    const statusEl = container.querySelector("#import-temperature-status");
+    const { readings } = pendingTemperatureImport;
+    const thresholdRaw = container.querySelector("#heatwave-threshold-input").value;
+    const threshold = thresholdRaw === "" ? null : Number(thresholdRaw);
+
+    btn.disabled = true;
+    btn.textContent = "Importing…";
+
+    try {
+      let heatwaveDates = [];
+      if (threshold != null && !isNaN(threshold)) {
+        const existingHeatwaveDays = new Set(
+          (await DB.getAllFactorEntries()).filter((e) => e.name === "Heatwave").map((e) => Analysis.dayKey(e.timestamp))
+        );
+        heatwaveDates = readings
+          .filter((r) => r.value >= threshold && !existingHeatwaveDays.has(r.date))
+          .map((r) => new Date(`${r.date}T12:00:00`).toISOString())
+          .sort();
+      }
+
+      await DB.bulkImportTemperatures({ temperatures: readings.map((r) => ({ date: r.date, value: r.value })), heatwaveDates });
+
+      statusEl.textContent =
+        heatwaveDates.length > 0
+          ? `Imported ${readings.length} readings. Flagged ${heatwaveDates.length} new Heatwave ${heatwaveDates.length === 1 ? "day" : "days"}.`
+          : `Imported ${readings.length} readings.`;
+      container.querySelector("#import-temperature-preview").hidden = true;
+      container.querySelector("#import-temperature-file").value = "";
+      pendingTemperatureImport = null;
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "Import failed partway through.";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Import";
+    }
+  }
+
   // ---- Manage Tags ----
 
   async function loadTagUsage() {
@@ -692,6 +808,27 @@ const DataView = (() => {
       </div>
       <div id="import-candidates" class="import-candidates"></div>
       <button type="button" id="import-candidates-confirm-btn" class="primary-btn" hidden>Import Selected</button>
+
+      <hr class="section-divider" />
+      <h2 class="section-heading">Import Temperature Data</h2>
+      <p class="export-note" style="margin-top: 0">
+        One reading per line: a date, then the value (e.g. "2026-01-01    6.0"). Values are stored
+        as-is for comparison against symptom charts in Trends.
+      </p>
+      <div class="field">
+        <label for="import-temperature-file">Temperature log (.txt)</label>
+        <input type="file" id="import-temperature-file" accept=".txt,text/plain" />
+        <p id="import-temperature-status" class="import-status"></p>
+        <div id="import-temperature-preview" class="import-preview" hidden>
+          <p id="import-temperature-summary"></p>
+          <div class="field">
+            <label for="heatwave-threshold-input">Flag days above this value as a "Heatwave" factor (optional)</label>
+            <input type="number" id="heatwave-threshold-input" step="0.1" placeholder="e.g. 25" />
+            <p id="heatwave-threshold-preview" class="export-note" style="margin-top: 0.4rem"></p>
+          </div>
+          <button type="button" id="import-temperature-confirm-btn" class="primary-btn">Import</button>
+        </div>
+      </div>
     `;
   }
 
@@ -724,6 +861,13 @@ const DataView = (() => {
       if (file) handleTextFile(file);
     });
     container.querySelector("#import-candidates-confirm-btn").addEventListener("click", confirmCandidateImport);
+
+    container.querySelector("#import-temperature-file").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) handleTemperatureFile(file);
+    });
+    container.querySelector("#heatwave-threshold-input").addEventListener("input", renderHeatwaveThresholdPreview);
+    container.querySelector("#import-temperature-confirm-btn").addEventListener("click", confirmTemperatureImport);
 
     await loadExportSummary();
     await loadPickerData();

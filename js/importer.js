@@ -1,5 +1,5 @@
 /**
- * Parsing for the Import feature. Three input shapes, all handled here as
+ * Parsing for the Import feature. Four input shapes, all handled here as
  * pure functions (no DOM, no IndexedDB) so the Data view (data.js) only has
  * to render what these return and let the user confirm:
  *
@@ -13,6 +13,8 @@
  *    principle) - it only recognizes tags/conditions you've already
  *    created, which is why its output is always a review-before-import
  *    list rather than something committed straight to the DB.
+ *  - parseTemperatureFile: one daily reading per line (`YYYY-MM-DD` then a
+ *    decimal value), for the separate "Import Temperature Data" section.
  */
 const Importer = (() => {
   // ---- JSON backup (mirrors export.js's exportJson payload shape) ----
@@ -279,5 +281,40 @@ const Importer = (() => {
       .filter((c) => c.note || c.tags.length || c.conditions.length || c.severity != null);
   }
 
-  return { parseJsonBackup, csvToEntries, parseTextToCandidates };
+  // ---- Temperature log ----
+
+  const TEMPERATURE_LINE_RE = /^(\d{4}-\d{2}-\d{2})\s+(-?\d+(?:\.\d+)?)$/;
+
+  /**
+   * Parses a plain-text temperature log: one reading per non-blank line,
+   * `YYYY-MM-DD` followed by whitespace and a decimal value (negative
+   * allowed), e.g. "2026-01-01    6.0". Lines that don't match, or whose
+   * date isn't a real calendar date, are skipped and counted separately
+   * rather than aborting the whole file. A date repeated within the file
+   * keeps only its last occurrence (a plain Map), matching how re-importing
+   * an overlapping file later overwrites via `put`.
+   * @param {string} text
+   * @returns {{readings: {date: string, value: number}[], skippedCount: number}}
+   */
+  function parseTemperatureFile(text) {
+    const byDate = new Map();
+    let skippedCount = 0;
+
+    text.split(/\r?\n/).forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      const match = trimmed.match(TEMPERATURE_LINE_RE);
+      if (!match || isNaN(new Date(match[1]).getTime())) {
+        skippedCount++;
+        return;
+      }
+
+      byDate.set(match[1], { date: match[1], value: parseFloat(match[2]) });
+    });
+
+    return { readings: [...byDate.values()], skippedCount };
+  }
+
+  return { parseJsonBackup, csvToEntries, parseTextToCandidates, parseTemperatureFile };
 })();

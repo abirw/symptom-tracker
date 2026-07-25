@@ -1,16 +1,18 @@
 /**
- * Hand-rolled IndexedDB wrapper — no external dependency. Exposes five
- * object stores: `entries` (the logged symptom entries), `tags` and
- * `conditions` (both "grow as you go" lookup lists per SPEC.md), and
- * `factorEntries`/`factors` — a parallel, simpler log for things like period,
- * heatwaves, or medication changes that aren't symptoms themselves but help
- * explain symptom patterns (deliberately kept separate from `entries`).
- * Every public method returns a Promise; there is no in-memory cache here,
- * callers (the view modules) hold their own copies for the duration of a render.
+ * Hand-rolled IndexedDB wrapper — no external dependency. Exposes six object
+ * stores: `entries` (the logged symptom entries), `tags` and `conditions`
+ * (both "grow as you go" lookup lists per SPEC.md), `factorEntries`/`factors`
+ * — a parallel, simpler log for things like period, heatwaves, or medication
+ * changes that aren't symptoms themselves but help explain symptom patterns
+ * (deliberately kept separate from `entries`) — and `temperatures`, one
+ * value per calendar day, imported from a text file rather than logged by
+ * hand. Every public method returns a Promise; there is no in-memory cache
+ * here, callers (the view modules) hold their own copies for the duration
+ * of a render.
  */
 const DB = (() => {
   const DB_NAME = "symptom-tracker";
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
 
   let dbPromise = null;
 
@@ -76,6 +78,13 @@ const DB = (() => {
           const factorEntries = db.createObjectStore("factorEntries", { keyPath: "id" });
           factorEntries.createIndex("timestamp", "timestamp");
           factorEntries.createIndex("name", "name");
+        }
+
+        if (event.oldVersion < 4) {
+          // v3 -> v4: adds imported daily temperature readings. Keyed by
+          // date (not id) so re-importing an overlapping file just overwrites
+          // the affected days via `put`, with no separate dedup step needed.
+          db.createObjectStore("temperatures", { keyPath: "date" });
         }
       };
 
@@ -427,6 +436,45 @@ const DB = (() => {
     }
   }
 
+  // --- Temperatures (imported daily readings) ---
+
+  async function getAllTemperatures() {
+    const store = await tx("temperatures", "readonly");
+    return promisifyRequest(store.getAll());
+  }
+
+  /**
+   * Imports a batch of daily temperature readings, and optionally logs
+   * "Heatwave" factor entries for days above a threshold - in one
+   * transaction, same reasoning as bulkImportEntries (a large file shouldn't
+   * turn into hundreds of separate transactions).
+   * @param {object} opts
+   * @param {{date: string, value: number}[]} opts.temperatures - one per calendar day; `put` overwrites on re-import
+   * @param {string[]} opts.heatwaveDates - ISO timestamps (already deduped
+   *   against existing "Heatwave" factorEntries by the caller), ascending -
+   *   each becomes a new factorEntries record
+   */
+  async function bulkImportTemperatures({ temperatures, heatwaveDates }) {
+    const db = await open();
+    const transaction = db.transaction(["temperatures", "factors", "factorEntries"], "readwrite");
+    const tempStore = transaction.objectStore("temperatures");
+    const factorStore = transaction.objectStore("factors");
+    const factorEntryStore = transaction.objectStore("factorEntries");
+
+    for (const t of temperatures) {
+      await promisifyRequest(tempStore.put(t));
+    }
+
+    if (heatwaveDates.length > 0) {
+      await upsertEarliest(factorStore, "Heatwave", "firstUsed", heatwaveDates[0], {});
+    }
+    for (const timestamp of heatwaveDates) {
+      await promisifyRequest(
+        factorEntryStore.add({ id: uuid(), timestamp, name: "Heatwave", note: "Auto-flagged from imported temperature data" })
+      );
+    }
+  }
+
   return {
     open,
     uuid,
@@ -449,5 +497,7 @@ const DB = (() => {
     addFactorEntry,
     deleteFactorEntry,
     getAllFactorEntries,
+    getAllTemperatures,
+    bulkImportTemperatures,
   };
 })();
