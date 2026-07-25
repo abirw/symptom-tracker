@@ -91,55 +91,6 @@ const TrendsView = (() => {
     });
   }
 
-  // --- Bucketing helpers ---
-
-  /** Monday-anchored start-of-week for `date` (used to group entries into weekly buckets). */
-  function bucketKeyWeek(date) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    const dayIndex = (d.getDay() + 6) % 7; // 0 = Monday
-    d.setDate(d.getDate() - dayIndex);
-    return d;
-  }
-
-  /** Start-of-month for `date` (used to group entries into monthly buckets). */
-  function bucketKeyMonth(date) {
-    const d = new Date(date);
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  }
-
-  /** Short windows get weekly bars/points; longer ones switch to monthly so the chart stays readable. */
-  function chooseGranularity(start, end) {
-    const spanDays = (end - start) / 86400000;
-    return spanDays <= 70 ? "week" : "month";
-  }
-
-  /** Generates every bucket start date from `start` to `end`, inclusive, at the given granularity. */
-  function buildBuckets(start, end, granularity) {
-    const buckets = [];
-    const cur = granularity === "week" ? bucketKeyWeek(start) : bucketKeyMonth(start);
-    const endKey = granularity === "week" ? bucketKeyWeek(end) : bucketKeyMonth(end);
-    while (cur.getTime() <= endKey.getTime()) {
-      buckets.push(new Date(cur));
-      if (granularity === "week") {
-        cur.setDate(cur.getDate() + 7);
-      } else {
-        cur.setMonth(cur.getMonth() + 1);
-      }
-    }
-    return buckets;
-  }
-
-  function formatDate(d) {
-    return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  }
-
-  function formatBucketLabel(date, granularity) {
-    return granularity === "week"
-      ? `Wk of ${new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-      : new Date(date).toLocaleDateString(undefined, { month: "short", year: "numeric" });
-  }
-
   // --- Data window ---
 
   /** Entries matching the condition filter (if any); the tag/date filtering happens per-series on top of this. */
@@ -227,7 +178,7 @@ const TrendsView = (() => {
     noteEl.innerHTML = "";
     if (tagFirstUsed) {
       noteEl.hidden = false;
-      noteEl.textContent = `Tracking started ${formatDate(
+      noteEl.textContent = `Tracking started ${Bucketing.formatDate(
         tagFirstUsed
       )} — no data is shown before this date because it wasn't being logged yet.`;
     } else {
@@ -244,9 +195,9 @@ const TrendsView = (() => {
     emptyEl.hidden = filtered.length !== 0;
     if (filtered.length === 0) emptyEl.textContent = "No entries in this range.";
 
-    const granularity = chooseGranularity(start, end);
-    const buckets = buildBuckets(start, end, granularity);
-    const labels = buckets.map((b) => formatBucketLabel(b, granularity));
+    const granularity = Bucketing.chooseGranularity(start, end);
+    const buckets = Bucketing.buildBuckets(start, end, granularity);
+    const labels = buckets.map((b) => Bucketing.formatBucketLabel(b, granularity));
 
     const freqCounts = buckets.map(() => 0);
     const sevSums = buckets.map(() => 0);
@@ -254,7 +205,7 @@ const TrendsView = (() => {
 
     filtered.forEach((e) => {
       const t = new Date(e.timestamp);
-      const key = granularity === "week" ? bucketKeyWeek(t) : bucketKeyMonth(t);
+      const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx === -1) return;
       freqCounts[idx]++;
@@ -317,13 +268,13 @@ const TrendsView = (() => {
     windows.forEach((w, i) => {
       if (i > 0) noteEl.appendChild(document.createTextNode(" · "));
       const span = document.createElement("span");
-      span.textContent = `${w.name}: ${formatDate(w.tagFirstUsed || w.start)}`;
+      span.textContent = `${w.name}: ${Bucketing.formatDate(w.tagFirstUsed || w.start)}`;
       noteEl.appendChild(span);
     });
 
-    const granularity = chooseGranularity(sharedStart, now);
-    const buckets = buildBuckets(sharedStart, now, granularity);
-    const labels = buckets.map((b) => formatBucketLabel(b, granularity));
+    const granularity = Bucketing.chooseGranularity(sharedStart, now);
+    const buckets = Bucketing.buildBuckets(sharedStart, now, granularity);
+    const labels = buckets.map((b) => Bucketing.formatBucketLabel(b, granularity));
 
     let anyData = false;
 
@@ -339,7 +290,7 @@ const TrendsView = (() => {
       const sevCounts = buckets.map(() => 0);
       filtered.forEach((e) => {
         const t = new Date(e.timestamp);
-        const key = granularity === "week" ? bucketKeyWeek(t) : bucketKeyMonth(t);
+        const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
         const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
         if (idx === -1) return;
         counts[idx]++;
@@ -356,7 +307,7 @@ const TrendsView = (() => {
       // so comparing it directly against each bucket's start would wrongly
       // null out the whole bucket it actually starts in, discarding real
       // entries logged later that same week/month.
-      const wStartKey = granularity === "week" ? bucketKeyWeek(w.start) : bucketKeyMonth(w.start);
+      const wStartKey = granularity === "week" ? Bucketing.bucketKeyWeek(w.start) : Bucketing.bucketKeyMonth(w.start);
       const freqData = buckets.map((b, idx) => (b.getTime() < wStartKey.getTime() ? null : counts[idx]));
       const sevData = buckets.map((b, idx) => {
         if (b.getTime() < wStartKey.getTime()) return null;

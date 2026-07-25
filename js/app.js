@@ -14,6 +14,7 @@
     log: LogView,
     timeline: TimelineView,
     trends: TrendsView,
+    reports: ReportsView,
     data: DataView,
   };
 
@@ -21,6 +22,7 @@
     log: "Log Entry",
     timeline: "Timeline",
     trends: "Trends",
+    reports: "Reports",
     data: "Export & Import",
   };
 

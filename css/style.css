@@ -983,6 +983,178 @@ input[type="file"]::file-selector-button {
   height: 220px;
 }
 
+/* --- Reports --- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.chart-card .stat-grid {
+  margin-bottom: 0;
+}
+
+.stat-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+}
+
+.stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 0.15rem;
+}
+
+.cooccur-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cooccur-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cooccur-pct {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.cluster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cluster-item {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+}
+
+.cluster-range {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.cluster-meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: 0.15rem;
+}
+
+.word-freq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.word-freq-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  padding: 0.5rem 0.1rem;
+}
+
+.word-freq-row:last-child {
+  border-bottom: none;
+}
+
+.word-freq-word {
+  font-weight: 600;
+}
+
+.word-freq-meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.word-trend-title {
+  margin: 0.9rem 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.chart-wrap-small {
+  height: 160px;
+}
+
+/* --- Print (Share PDF Report) --- */
+
+@media print {
+  .app-header,
+  .tab-bar,
+  .no-print {
+    display: none !important;
+  }
+
+  #view-root {
+    padding: 0;
+    overflow: visible;
+  }
+
+  body {
+    background: #ffffff;
+    color: #111111;
+  }
+
+  .chart-card,
+  .stat-card,
+  .cluster-item,
+  .tracking-note {
+    background: #ffffff;
+    border-color: #cccccc;
+    color: #111111;
+    break-inside: avoid;
+  }
+
+  .chart-card h3,
+  .stat-label,
+  .cluster-meta,
+  .word-freq-meta,
+  .word-trend-title,
+  .cooccur-pct,
+  .tracking-note {
+    color: #444444;
+  }
+
+  .chip-static {
+    border-color: #999999;
+    color: #111111;
+  }
+
+  .chip-condition {
+    border-color: #555555;
+    color: #111111;
+  }
+}
+
 /* --- Motion --- */
 
 @media (prefers-reduced-motion: reduce) {
