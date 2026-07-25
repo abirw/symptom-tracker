@@ -69,16 +69,15 @@ const Analysis = (() => {
   }
 
   /**
-   * For every calendar day `focusTagName` occurred, tallies every *other*
-   * tag/condition that also appeared that day (any entry that day, not just
-   * the same entry). Returns ranked lists for tags and conditions separately.
+   * For every calendar day `focusTagName` occurred, tallies every *other* tag
+   * that also appeared that day (any entry that day, not just the same
+   * entry). Returns a ranked list of co-occurring symptoms.
    */
   function computeCoOccurrence(entries, focusTagName) {
     const focusDayKeys = new Set(entriesWithTag(entries, focusTagName).map((e) => dayKey(e.timestamp)));
     const totalDays = focusDayKeys.size;
 
     const tagDayPresence = new Map(); // name -> Set of day keys
-    const condDayPresence = new Map();
 
     entries.forEach((e) => {
       const key = dayKey(e.timestamp);
@@ -88,22 +87,17 @@ const Analysis = (() => {
         if (!tagDayPresence.has(name)) tagDayPresence.set(name, new Set());
         tagDayPresence.get(name).add(key);
       });
-      (e.conditions || []).forEach((name) => {
-        if (!condDayPresence.has(name)) condDayPresence.set(name, new Set());
-        condDayPresence.get(name).add(key);
-      });
     });
 
-    const rank = (presenceMap) =>
-      [...presenceMap.entries()]
-        .map(([name, days]) => ({
-          name,
-          count: days.size,
-          percentOfDays: totalDays ? Math.round((days.size / totalDays) * 1000) / 10 : 0,
-        }))
-        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const tags = [...tagDayPresence.entries()]
+      .map(([name, days]) => ({
+        name,
+        count: days.size,
+        percentOfDays: totalDays ? Math.round((days.size / totalDays) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
-    return { totalDays, tags: rank(tagDayPresence), conditions: rank(condDayPresence) };
+    return { totalDays, tags };
   }
 
   /**

@@ -268,20 +268,19 @@ const ReportsView = (() => {
 
   function renderCoOccurrence(bodyEl, pool, tagName) {
     const co = Analysis.computeCoOccurrence(pool, tagName);
-    if (co.tags.length === 0 && co.conditions.length === 0) return;
-    const rows = (list, chipClass) =>
-      list
-        .slice(0, 8)
-        .map(
-          (item) =>
-            `<div class="cooccur-row"><span class="chip chip-static ${chipClass}">${item.name}</span><span class="cooccur-pct">${item.percentOfDays}% of days</span></div>`
-        )
-        .join("");
+    if (co.tags.length === 0) return;
+    const rows = co.tags
+      .slice(0, 8)
+      .map(
+        (item) =>
+          `<div class="cooccur-row"><span class="chip chip-static">${item.name}</span><span class="cooccur-pct">${item.percentOfDays}% of days</span></div>`
+      )
+      .join("");
     bodyEl.insertAdjacentHTML(
       "beforeend",
       `<div class="chart-card">
-        <h3>Co-occurring Symptoms &amp; Conditions</h3>
-        <div class="cooccur-list">${rows(co.tags, "")}${rows(co.conditions, "chip-condition")}</div>
+        <h3>Co-occurring Symptoms</h3>
+        <div class="cooccur-list">${rows}</div>
       </div>`
     );
   }
