@@ -392,24 +392,45 @@ const DB = (() => {
 
   /**
    * Performs a full structured import (Data tab's "Restore a backup") in a
-   * single transaction spanning entries/tags/conditions, instead of the
-   * hundreds of separate transactions a naive per-record loop would open -
-   * that overhead is what made large imports feel like they'd hung even
-   * though they'd eventually finish.
+   * single transaction spanning entries/tags/conditions/factors/
+   * factorEntries/temperatures, instead of the hundreds of separate
+   * transactions a naive per-record loop would open - that overhead is what
+   * made large imports feel like they'd hung even though they'd eventually
+   * finish.
    * @param {object} opts
    * @param {object[]} opts.entries - entry records to upsert (each already has an id)
    * @param {object[]} opts.tagRecords - explicit tag metadata from the file, if any (may be empty)
    * @param {object[]} opts.conditionRecords - explicit condition metadata from the file, if any (may be empty)
    * @param {Map<string,string>} opts.tagFirstUse - tag name -> earliest ISO timestamp, derived from the entries
    * @param {Map<string,string>} opts.conditionFirstUse - condition name -> earliest ISO timestamp, derived from the entries
-   * @param {boolean} opts.clearExistingEntries - true for "Replace All"
+   * @param {boolean} opts.clearExistingEntries - true for "Replace All" - also clears factorEntries
+   *   (both are "logged data"), but never tags/conditions/factors (lookup lists) or temperatures
+   * @param {object[]} [opts.factorEntryRecords] - factor entries to upsert (each already has an id, so
+   *   re-importing the same backup in Append mode overwrites in place rather than duplicating)
+   * @param {object[]} [opts.factorRecords] - explicit factor metadata from the file, if any (may be empty)
+   * @param {Map<string,string>} [opts.factorFirstUse] - factor name -> earliest ISO timestamp, derived from factorEntryRecords
+   * @param {object[]} [opts.temperatureRecords] - {date, value} readings, always upserted regardless of mode
    */
-  async function bulkImportEntries({ entries, tagRecords, conditionRecords, tagFirstUse, conditionFirstUse, clearExistingEntries }) {
+  async function bulkImportEntries({
+    entries,
+    tagRecords,
+    conditionRecords,
+    tagFirstUse,
+    conditionFirstUse,
+    clearExistingEntries,
+    factorEntryRecords = [],
+    factorRecords = [],
+    factorFirstUse = new Map(),
+    temperatureRecords = [],
+  }) {
     const db = await open();
-    const transaction = db.transaction(["entries", "tags", "conditions"], "readwrite");
+    const transaction = db.transaction(["entries", "tags", "conditions", "factors", "factorEntries", "temperatures"], "readwrite");
     const entryStore = transaction.objectStore("entries");
     const tagStore = transaction.objectStore("tags");
     const conditionStore = transaction.objectStore("conditions");
+    const factorStore = transaction.objectStore("factors");
+    const factorEntryStore = transaction.objectStore("factorEntries");
+    const temperatureStore = transaction.objectStore("temperatures");
 
     for (const t of tagRecords) {
       await upsertEarliest(tagStore, t.name, "firstUsed", t.firstUsed || new Date().toISOString(), {
@@ -419,9 +440,13 @@ const DB = (() => {
     for (const c of conditionRecords) {
       await upsertEarliest(conditionStore, c.name, "createdAt", c.createdAt || new Date().toISOString(), {});
     }
+    for (const f of factorRecords) {
+      await upsertEarliest(factorStore, f.name, "firstUsed", f.firstUsed || new Date().toISOString(), {});
+    }
 
     if (clearExistingEntries) {
       await promisifyRequest(entryStore.clear());
+      await promisifyRequest(factorEntryStore.clear());
     }
 
     for (const [name, occurredAt] of tagFirstUse) {
@@ -430,9 +455,18 @@ const DB = (() => {
     for (const [name, occurredAt] of conditionFirstUse) {
       await upsertEarliest(conditionStore, name, "createdAt", occurredAt, {});
     }
+    for (const [name, occurredAt] of factorFirstUse) {
+      await upsertEarliest(factorStore, name, "firstUsed", occurredAt, {});
+    }
 
     for (const e of entries) {
       await promisifyRequest(entryStore.put(e));
+    }
+    for (const fe of factorEntryRecords) {
+      await promisifyRequest(factorEntryStore.put(fe));
+    }
+    for (const t of temperatureRecords) {
+      await promisifyRequest(temperatureStore.put(t));
     }
   }
 

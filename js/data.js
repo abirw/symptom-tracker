@@ -1,7 +1,8 @@
 /**
  * Data view: Export (JSON/CSV via the iOS share sheet) plus Import, in five
  * flavors:
- *  - Restore a JSON backup (this app's own export format, full fidelity).
+ *  - Restore a JSON backup (this app's own export format, full fidelity -
+ *    entries, tags, conditions, factors/factorEntries, and temperatures).
  *  - Bulk-import a CSV (this app's own export columns, or a hand-made one
  *    with at least a "timestamp" column).
  *  - Extract entries from a plain-text journal via a local heuristic
@@ -18,7 +19,7 @@ const DataView = (() => {
   let container;
   let allTags = [];
   let allConditions = [];
-  let pendingStructuredImport = null; // { entries, tags, conditions } awaiting confirmation
+  let pendingStructuredImport = null; // { entries, tags, conditions, factorEntries, factors, temperatures } awaiting confirmation
   let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
@@ -86,12 +87,15 @@ const DataView = (() => {
   }
 
   async function exportJson() {
-    const [entries, tags, conditions] = await Promise.all([
+    const [entries, tags, conditions, factorEntries, factors, temperatures] = await Promise.all([
       DB.getAllEntries(),
       DB.getAllTags(),
       DB.getAllConditions(),
+      DB.getAllFactorEntries(),
+      DB.getAllFactors(),
+      DB.getAllTemperatures(),
     ]);
-    const payload = { exportedAt: new Date().toISOString(), entries, tags, conditions };
+    const payload = { exportedAt: new Date().toISOString(), entries, tags, conditions, factorEntries, factors, temperatures };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     return shareOrDownload(blob, buildFilename("json"), "application/json");
   }
@@ -148,28 +152,42 @@ const DataView = (() => {
   /** Rebuilds the summary text under the mode chips - depends on both the parsed file and the append/replace choice. */
   async function renderStructuredImportSummary() {
     if (!pendingStructuredImport) return;
-    const { entries, tags, conditions } = pendingStructuredImport;
+    const { entries, tags, conditions, factorEntries, factors, temperatures } = pendingStructuredImport;
 
     const parts = [`${entries.length} ${entries.length === 1 ? "entry" : "entries"}`];
     if (tags.length) parts.push(`${tags.length} ${tags.length === 1 ? "tag" : "tags"}`);
     if (conditions.length) parts.push(`${conditions.length} ${conditions.length === 1 ? "condition" : "conditions"}`);
+    if (factorEntries.length) {
+      const factorNameCount = new Set(factorEntries.map((fe) => fe.name)).size;
+      parts.push(`${factorEntries.length} factor entries across ${factorNameCount} ${factorNameCount === 1 ? "factor" : "factors"}`);
+    }
+    if (temperatures.length) parts.push(`${temperatures.length} temperature readings`);
     let found = `Found ${parts.join(", ")}.`;
     if (tags.length === 0 && conditions.length === 0) {
       found += " No tags/conditions section in this file - tags and their tracking-started dates will be recomputed from the entries themselves.";
     }
+    if (factorEntries.length > 0 && factors.length === 0) {
+      found += " No factors section in this file - factor tracking-started dates will be recomputed from the factor entries themselves.";
+    }
 
     let action;
     if (structuredImportMode === "replace") {
-      const currentCount = (await DB.getAllEntries()).length;
-      action =
-        currentCount > 0
-          ? `This will permanently delete all ${currentCount} existing ${
-              currentCount === 1 ? "entry" : "entries"
-            } and replace them with the ${entries.length} from this file.`
-          : `This will import the ${entries.length} entries from this file (nothing existing to replace yet).`;
+      const [currentCount, currentFactorEntryCount] = await Promise.all([
+        DB.getAllEntries().then((e) => e.length),
+        DB.getAllFactorEntries().then((e) => e.length),
+      ]);
+      if (currentCount > 0 || currentFactorEntryCount > 0) {
+        const deletedParts = [`${currentCount} existing ${currentCount === 1 ? "entry" : "entries"}`];
+        if (currentFactorEntryCount > 0) {
+          deletedParts.push(`${currentFactorEntryCount} factor ${currentFactorEntryCount === 1 ? "entry" : "entries"}`);
+        }
+        action = `This will permanently delete all ${deletedParts.join(" and ")} and replace them with the file's data.`;
+      } else {
+        action = `This will import the ${entries.length} entries from this file (nothing existing to replace yet).`;
+      }
     } else {
       action =
-        "This adds to what's already stored - entries sharing an id with one you already have are updated in place, not duplicated. Entries you deleted from the file are NOT removed; use Replace All for that.";
+        "This adds to what's already stored - entries/factor entries sharing an id with one you already have are updated in place, not duplicated. Records you deleted from the file are NOT removed; use Replace All for that.";
     }
 
     container.querySelector("#import-structured-summary").textContent = `${found} ${action}`;
@@ -186,16 +204,19 @@ const DataView = (() => {
 
     try {
       const text = await file.text();
-      let entries, tags, conditions;
+      let entries, tags, conditions, factorEntries, factors, temperatures;
       if (file.name.toLowerCase().endsWith(".json")) {
-        ({ entries, tags, conditions } = Importer.parseJsonBackup(text));
+        ({ entries, tags, conditions, factorEntries, factors, temperatures } = Importer.parseJsonBackup(text));
       } else {
         entries = Importer.csvToEntries(text);
         tags = [];
         conditions = [];
+        factorEntries = [];
+        factors = [];
+        temperatures = [];
       }
 
-      pendingStructuredImport = { entries, tags, conditions };
+      pendingStructuredImport = { entries, tags, conditions, factorEntries, factors, temperatures };
       statusEl.textContent = "";
       await renderStructuredImportSummary();
       previewEl.hidden = false;
@@ -227,6 +248,18 @@ const DataView = (() => {
     return earliest;
   }
 
+  /** Same idea as computeEarliestByName, but factor entries have a singular `name` string, not an array field. */
+  function computeEarliestByFactorName(factorEntries) {
+    const earliest = new Map();
+    factorEntries.forEach((fe) => {
+      const current = earliest.get(fe.name);
+      if (!current || new Date(fe.timestamp) < new Date(current)) {
+        earliest.set(fe.name, fe.timestamp);
+      }
+    });
+    return earliest;
+  }
+
   /**
    * Runs the actual import - no confirm() dialog gate: those are silently
    * broken in an installed iOS PWA (standalone display mode doesn't show
@@ -242,7 +275,7 @@ const DataView = (() => {
     if (!pendingStructuredImport) return;
     const btn = container.querySelector("#import-structured-confirm-btn");
     const statusEl = container.querySelector("#import-structured-status");
-    const { entries, tags, conditions } = pendingStructuredImport;
+    const { entries, tags, conditions, factorEntries, factors, temperatures } = pendingStructuredImport;
     const isReplace = structuredImportMode === "replace";
 
     btn.disabled = true;
@@ -250,6 +283,7 @@ const DataView = (() => {
 
     try {
       const entriesWithIds = entries.map((e) => ({ ...e, id: e.id || DB.uuid() }));
+      const factorEntriesWithIds = factorEntries.map((fe) => ({ ...fe, id: fe.id || DB.uuid() }));
       await DB.bulkImportEntries({
         entries: entriesWithIds,
         tagRecords: tags,
@@ -257,11 +291,23 @@ const DataView = (() => {
         tagFirstUse: computeEarliestByName(entries, "tags"),
         conditionFirstUse: computeEarliestByName(entries, "conditions"),
         clearExistingEntries: isReplace,
+        factorEntryRecords: factorEntriesWithIds,
+        factorRecords: factors,
+        factorFirstUse: computeEarliestByFactorName(factorEntries),
+        temperatureRecords: temperatures,
       });
 
-      statusEl.textContent = `${isReplace ? "Replaced all entries with" : "Imported"} ${entries.length} ${
+      let statusText = `${isReplace ? "Replaced all entries with" : "Imported"} ${entries.length} ${
         entries.length === 1 ? "entry" : "entries"
       }.`;
+      if (factorEntries.length > 0) {
+        statusText += ` ${factorEntries.length} factor ${factorEntries.length === 1 ? "entry" : "entries"} and ${temperatures.length} temperature ${
+          temperatures.length === 1 ? "reading" : "readings"
+        } also restored.`;
+      } else if (temperatures.length > 0) {
+        statusText += ` ${temperatures.length} temperature ${temperatures.length === 1 ? "reading" : "readings"} also restored.`;
+      }
+      statusEl.textContent = statusText;
       container.querySelector("#import-structured-preview").hidden = true;
       container.querySelector("#import-structured-file").value = "";
       pendingStructuredImport = null;
@@ -850,8 +896,9 @@ const DataView = (() => {
       </div>
       <p id="export-status" class="confirmation" hidden></p>
       <p class="export-note">
-        JSON keeps full fidelity (entries, tags, conditions) for backup. CSV is for opening in a
-        spreadsheet. Nothing leaves this device except through this deliberate export action.
+        JSON keeps full fidelity (entries, tags, conditions, factors, temperature data) for backup.
+        CSV is for opening in a spreadsheet (symptom entries only). Nothing leaves this device
+        except through this deliberate export action.
       </p>
 
       <hr class="section-divider" />
