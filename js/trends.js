@@ -28,6 +28,10 @@
  * instead drawn directly on top of the Frequency/Severity charts via a small
  * custom Chart.js plugin, registered once below - that's where "did this
  * correlate with what I was already looking at" is actually answerable.
+ *
+ * Frequency/severity counting is weighted by entry.occurrenceCount (via
+ * Analysis.occurrenceCount) - an entry logged as 2 occurrences counts twice
+ * in the frequency bar and pulls the severity average twice as hard.
  */
 const TrendsView = (() => {
   let container;
@@ -328,10 +332,11 @@ const TrendsView = (() => {
       const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx === -1) return;
-      freqCounts[idx]++;
+      const occ = Analysis.occurrenceCount(e);
+      freqCounts[idx] += occ;
       if (e.severity != null) {
-        sevSums[idx] += e.severity;
-        sevCounts[idx]++;
+        sevSums[idx] += e.severity * occ;
+        sevCounts[idx] += occ;
       }
     });
 
@@ -415,10 +420,11 @@ const TrendsView = (() => {
         const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
         const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
         if (idx === -1) return;
-        counts[idx]++;
+        const occ = Analysis.occurrenceCount(e);
+        counts[idx] += occ;
         if (e.severity != null) {
-          sums[idx] += e.severity;
-          sevCounts[idx]++;
+          sums[idx] += e.severity * occ;
+          sevCounts[idx] += occ;
         }
       });
 

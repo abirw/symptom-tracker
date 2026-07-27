@@ -240,14 +240,11 @@ const ReportsView = (() => {
   // --- Section builders ---
 
   function buildStatCardsHtml(focusEntries, streaks) {
-    const withSeverity = focusEntries.filter((e) => e.severity != null);
-    const avgSeverity = withSeverity.length
-      ? (withSeverity.reduce((s, e) => s + e.severity, 0) / withSeverity.length).toFixed(1)
-      : "—";
+    const avgSeverity = Analysis.weightedAvgSeverity(focusEntries);
     return `
       <div class="stat-grid">
-        ${statCard("Total Entries", focusEntries.length)}
-        ${statCard("Avg Severity", avgSeverity)}
+        ${statCard("Total Occurrences", Analysis.totalOccurrences(focusEntries))}
+        ${statCard("Avg Severity", avgSeverity != null ? avgSeverity.toFixed(1) : "—")}
         ${statCard("Days Since Last", formatDays(streaks.daysSinceLast))}
         ${statCard("Longest Symptom-Free Streak", formatDays(streaks.longestGapDays))}
       </div>
@@ -289,10 +286,11 @@ const ReportsView = (() => {
       const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx === -1) return;
-      freqCounts[idx]++;
+      const occ = Analysis.occurrenceCount(e);
+      freqCounts[idx] += occ;
       if (e.severity != null) {
-        sevSums[idx] += e.severity;
-        sevCounts[idx]++;
+        sevSums[idx] += e.severity * occ;
+        sevCounts[idx] += occ;
       }
     });
     const sevAverages = buckets.map((_, i) => (sevCounts[i] ? +(sevSums[i] / sevCounts[i]).toFixed(2) : null));
@@ -585,11 +583,10 @@ const ReportsView = (() => {
   // --- Overview (no symptom selected) ---
 
   function renderOverview(bodyEl, pool, printMode) {
-    const withSeverity = pool.filter((e) => e.severity != null);
-    const avgSeverity = withSeverity.length ? (withSeverity.reduce((s, e) => s + e.severity, 0) / withSeverity.length).toFixed(1) : "—";
+    const avgSeverity = Analysis.weightedAvgSeverity(pool);
 
     const tagCounts = new Map();
-    pool.forEach((e) => (e.tags || []).forEach((name) => tagCounts.set(name, (tagCounts.get(name) || 0) + 1)));
+    pool.forEach((e) => (e.tags || []).forEach((name) => tagCounts.set(name, (tagCounts.get(name) || 0) + Analysis.occurrenceCount(e))));
     const mostLogged = [...tagCounts.entries()].sort((a, b) => b[1] - a[1])[0];
 
     const earliest = pool.reduce((min, e) => {
@@ -600,10 +597,10 @@ const ReportsView = (() => {
     bodyEl.insertAdjacentHTML(
       "beforeend",
       `<div class="stat-grid">
-        ${statCard("Total Entries", pool.length)}
+        ${statCard("Total Occurrences", Analysis.totalOccurrences(pool))}
         ${statCard("Tracking Span", earliest ? `${Bucketing.formatDate(earliest)} – now` : "—")}
         ${statCard("Most-Logged Symptom", mostLogged ? mostLogged[0] : "—")}
-        ${statCard("Avg Severity", avgSeverity)}
+        ${statCard("Avg Severity", avgSeverity != null ? avgSeverity.toFixed(1) : "—")}
       </div>`
     );
 

@@ -3,6 +3,19 @@
  * No DOM, no IndexedDB - takes an already-filtered `entries` array (plus a
  * focus tag name where relevant) and returns plain data, so every algorithm
  * here is unit-testable in a plain Node harness, same as importer.js.
+ *
+ * `entry.occurrenceCount` ("this one logged entry actually represents N
+ * occurrences", e.g. "had stomach drop twice before bed") is honored by
+ * every tally/average function below - computeDayOfWeekDistribution,
+ * computeSeverityDistribution, computeTimeOfDayDistribution, computeClusters'
+ * entryCount/avgSeverity, computeNoteWordFrequency's severity averages, and
+ * computeSymptomsOnFactorDays' severity averages - via the occurrenceCount/
+ * totalOccurrences/weightedAvgSeverity helpers. Day-*presence* functions
+ * (computeStreaksAndGaps, computeCoOccurrence, computeFactorCoOccurrence,
+ * computeLaggedFactorCorrelation, and computeClusters' own dayCount) are
+ * deliberately NOT weighted - occurrence count doesn't change which
+ * calendar days are occupied, only how many times something happened on
+ * them.
  */
 const Analysis = (() => {
   const STOPWORDS = new Set([
@@ -43,42 +56,71 @@ const Analysis = (() => {
     return entries.filter((e) => (e.tags || []).includes(tagName));
   }
 
+  /**
+   * `entry.occurrenceCount` - "this one logged entry actually represents N
+   * occurrences" (e.g. "had stomach drop twice before bed") - defaults to 1
+   * for entries logged before this field existed, or that never touched it.
+   * The single source of truth for that default, so every counting/averaging
+   * function below treats a plain entry as exactly one occurrence.
+   */
+  function occurrenceCount(entry) {
+    return entry.occurrenceCount || 1;
+  }
+
+  /** Sum of occurrenceCount across `entries` - the true occurrence total, not just entries.length. */
+  function totalOccurrences(entries) {
+    return entries.reduce((s, e) => s + occurrenceCount(e), 0);
+  }
+
+  /**
+   * Occurrence-weighted average severity: an entry logged as 2 occurrences
+   * pulls the average twice as hard as a 1-occurrence entry. Entries with no
+   * severity are excluded entirely (not counted as 0); null if none qualify.
+   */
+  function weightedAvgSeverity(entries) {
+    const withSeverity = entries.filter((e) => e.severity != null);
+    if (withSeverity.length === 0) return null;
+    const totalWeight = totalOccurrences(withSeverity);
+    const weightedSum = withSeverity.reduce((s, e) => s + e.severity * occurrenceCount(e), 0);
+    return Math.round((weightedSum / totalWeight) * 10) / 10;
+  }
+
   /** Distinct, sorted (ascending) calendar days on which `tagName` occurred at least once. */
   function distinctOccurrenceDays(entries, tagName) {
     const keys = new Set(entriesWithTag(entries, tagName).map((e) => dayKey(e.timestamp)));
     return [...keys].sort().map((k) => new Date(`${k}T00:00:00`));
   }
 
-  /** Counts per weekday (Sun=0 .. Sat=6), in that order. */
+  /** Counts per weekday (Sun=0 .. Sat=6), in that order - weighted by occurrenceCount, not raw entry count. */
   function computeDayOfWeekDistribution(entries) {
     const labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const counts = labels.map(() => 0);
     entries.forEach((e) => {
-      counts[new Date(e.timestamp).getDay()]++;
+      counts[new Date(e.timestamp).getDay()] += occurrenceCount(e);
     });
     return labels.map((day, i) => ({ day, count: counts[i] }));
   }
 
-  /** Counts per severity level 1-5; entries with no severity are excluded. */
+  /** Counts per severity level 1-5, weighted by occurrenceCount; entries with no severity are excluded. */
   function computeSeverityDistribution(entries) {
     const counts = [0, 0, 0, 0, 0];
     entries.forEach((e) => {
-      if (e.severity >= 1 && e.severity <= 5) counts[e.severity - 1]++;
+      if (e.severity >= 1 && e.severity <= 5) counts[e.severity - 1] += occurrenceCount(e);
     });
     return counts.map((count, i) => ({ severity: i + 1, count }));
   }
 
   /**
-   * Counts entries per time-of-day value, in the order `options` gives them
-   * (Log's TIME_OF_DAY_OPTIONS, passed in by the caller so this stays
-   * framework-free rather than importing LogView's list directly); entries
-   * with no timeOfDay set are excluded, same exclusion rule as
-   * computeSeverityDistribution.
+   * Counts entries per time-of-day value, weighted by occurrenceCount, in
+   * the order `options` gives them (Log's TIME_OF_DAY_OPTIONS, passed in by
+   * the caller so this stays framework-free rather than importing LogView's
+   * list directly); entries with no timeOfDay set are excluded, same
+   * exclusion rule as computeSeverityDistribution.
    */
   function computeTimeOfDayDistribution(entries, options) {
     const counts = new Map(options.map((o) => [o.value, 0]));
     entries.forEach((e) => {
-      if (e.timeOfDay && counts.has(e.timeOfDay)) counts.set(e.timeOfDay, counts.get(e.timeOfDay) + 1);
+      if (e.timeOfDay && counts.has(e.timeOfDay)) counts.set(e.timeOfDay, counts.get(e.timeOfDay) + occurrenceCount(e));
     });
     return options.map((o) => ({ value: o.value, label: o.label, count: counts.get(o.value) }));
   }
@@ -181,9 +223,8 @@ const Analysis = (() => {
       }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
-    const avg = (list) => (list.length ? Math.round((list.reduce((s, e) => s + e.severity, 0) / list.length) * 10) / 10 : null);
-    const avgSeverityOnDays = avg(onDayEntries.filter((e) => e.severity != null));
-    const overallAvgSeverity = avg(entries.filter((e) => e.severity != null));
+    const avgSeverityOnDays = weightedAvgSeverity(onDayEntries);
+    const overallAvgSeverity = weightedAvgSeverity(entries);
 
     return { totalDays, tags, avgSeverityOnDays, overallAvgSeverity };
   }
@@ -313,10 +354,8 @@ const Analysis = (() => {
           startDate,
           endDate,
           dayCount: run.length,
-          entryCount: inRange.length,
-          avgSeverity: withSeverity.length
-            ? Math.round((withSeverity.reduce((s, e) => s + e.severity, 0) / withSeverity.length) * 10) / 10
-            : null,
+          entryCount: totalOccurrences(inRange),
+          avgSeverity: weightedAvgSeverity(inRange),
           maxSeverity: withSeverity.length ? Math.max(...withSeverity.map((e) => e.severity)) : null,
         };
       });
@@ -337,10 +376,7 @@ const Analysis = (() => {
    * - e.g. "entries mentioning 'stress' average 4.1 vs your overall 2.8".
    */
   function computeNoteWordFrequency(entries, { topN = 15 } = {}) {
-    const withSeverity = entries.filter((e) => e.severity != null);
-    const overallAvgSeverity = withSeverity.length
-      ? Math.round((withSeverity.reduce((s, e) => s + e.severity, 0) / withSeverity.length) * 10) / 10
-      : null;
+    const overallAvgSeverity = weightedAvgSeverity(entries);
 
     const wordEntries = new Map(); // word -> array of entries mentioning it
 
@@ -355,22 +391,20 @@ const Analysis = (() => {
     return {
       overallAvgSeverity,
       words: [...wordEntries.entries()]
-        .map(([word, list]) => {
-          const listWithSeverity = list.filter((e) => e.severity != null);
-          return {
-            word,
-            count: list.length,
-            avgSeverityWithWord: listWithSeverity.length
-              ? Math.round((listWithSeverity.reduce((s, e) => s + e.severity, 0) / listWithSeverity.length) * 10) / 10
-              : null,
-          };
-        })
+        .map(([word, list]) => ({
+          word,
+          count: list.length, // entries mentioning the word - not occurrence-weighted, a note isn't "said" more because the symptom recurred
+          avgSeverityWithWord: weightedAvgSeverity(list),
+        }))
         .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word))
         .slice(0, topN),
     };
   }
 
   return {
+    occurrenceCount,
+    totalOccurrences,
+    weightedAvgSeverity,
     computeDayOfWeekDistribution,
     computeSeverityDistribution,
     computeTimeOfDayDistribution,

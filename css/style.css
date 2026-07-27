@@ -615,12 +615,60 @@ textarea {
   color: var(--text-dim);
 }
 
+.timeline-item-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .severity-badge {
   font-size: 0.75rem;
   font-weight: 600;
   border-radius: 999px;
   padding: 0.15rem 0.55rem;
   white-space: nowrap;
+}
+
+.occurrence-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+  color: var(--accent);
+  background: rgba(47, 184, 161, 0.15);
+}
+
+.occurrence-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.stepper-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.stepper-btn:disabled {
+  opacity: 0.4;
+}
+
+.stepper-value {
+  min-width: 2rem;
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 600;
 }
 
 .severity-badge[data-severity="1"] {

@@ -16,6 +16,13 @@
  * period is logged as one factor entry per day, the same way a run of
  * distinct same-day symptom entries is already how this app models repeated
  * episodes, rather than as a date range.
+ *
+ * Occurrences: when a single entry actually represents more than one
+ * occurrence (e.g. "had stomach drop twice before bed"), the Occurrences
+ * stepper (default 1) records that count on the entry itself instead of
+ * requiring N separate near-duplicate entries - Analysis weights its
+ * tally/average functions by this count (js/analysis.js has the full list
+ * of which ones do and which deliberately don't).
  */
 const AWARENESS_LEVELS = [
   { value: "alert", label: "Alert" },
@@ -38,6 +45,7 @@ const LogView = (() => {
   let selectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
   let selectedConditions = new Set();
   let selectedSeverity = null;
+  let selectedOccurrenceCount = 1; // never 0/null - a logged entry always represents at least 1 occurrence
   let selectedAwareness = null;
   let selectedTimeOfDay = null;
   let selectedTriggerTags = new Set(); // never reassigned, same reasoning as selectedTags
@@ -76,6 +84,15 @@ const LogView = (() => {
         <div class="field">
           <label>Severity</label>
           <div id="severity-row" class="severity-row"></div>
+        </div>
+
+        <div class="field">
+          <label>Occurrences</label>
+          <div class="occurrence-stepper">
+            <button type="button" id="occurrence-decrement" class="stepper-btn" aria-label="Decrease occurrences">−</button>
+            <span id="occurrence-count-display" class="stepper-value">1</span>
+            <button type="button" id="occurrence-increment" class="stepper-btn" aria-label="Increase occurrences">+</button>
+          </div>
         </div>
 
         <div class="field">
@@ -167,6 +184,12 @@ const LogView = (() => {
     });
   }
 
+  /** Just updates the displayed count and the decrement button's disabled state - the stepper itself isn't rebuilt, unlike the chip rows. */
+  function renderOccurrenceCount() {
+    container.querySelector("#occurrence-count-display").textContent = String(selectedOccurrenceCount);
+    container.querySelector("#occurrence-decrement").disabled = selectedOccurrenceCount <= 1;
+  }
+
   function renderAwareness() {
     Pickers.renderSingleSelectChips(container.querySelector("#awareness-row"), AWARENESS_LEVELS, () => selectedAwareness, (val) => {
       selectedAwareness = val;
@@ -219,6 +242,7 @@ const LogView = (() => {
     selectedTags.clear();
     selectedConditions = new Set();
     selectedSeverity = null;
+    selectedOccurrenceCount = 1;
     selectedAwareness = null;
     selectedTimeOfDay = null;
     selectedTriggerTags.clear();
@@ -230,6 +254,7 @@ const LogView = (() => {
     if (triggerField) triggerField.render();
     renderConditionChips();
     renderSeverity();
+    renderOccurrenceCount();
     renderAwareness();
     renderTimeOfDay();
   }
@@ -266,6 +291,7 @@ const LogView = (() => {
         tags: Array.from(selectedTags),
         conditions: Array.from(selectedConditions),
         severity: selectedSeverity,
+        occurrenceCount: selectedOccurrenceCount,
         note,
         durationMinutes,
         durationEstimated,
@@ -485,8 +511,17 @@ const LogView = (() => {
       clearTimeout(suggestionDebounceTimer);
       suggestionDebounceTimer = setTimeout(maybeRefreshSuggestions, 250);
     });
+    container.querySelector("#occurrence-decrement").addEventListener("click", () => {
+      selectedOccurrenceCount = Math.max(1, selectedOccurrenceCount - 1);
+      renderOccurrenceCount();
+    });
+    container.querySelector("#occurrence-increment").addEventListener("click", () => {
+      selectedOccurrenceCount += 1;
+      renderOccurrenceCount();
+    });
 
     renderSeverity();
+    renderOccurrenceCount();
     renderAwareness();
     renderTimeOfDay();
     container.querySelector("#timestamp-input").value = DateUtils.nowForInput();

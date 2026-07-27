@@ -146,6 +146,7 @@ const DB = (() => {
       conditions: entry.conditions || [],
       severity: entry.severity ?? null,
       note: entry.note || "",
+      occurrenceCount: entry.occurrenceCount || 1,
       durationMinutes: entry.durationMinutes ?? null,
       durationEstimated: entry.durationEstimated ?? false,
       awarenessLevel: entry.awarenessLevel ?? null,

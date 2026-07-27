@@ -10,7 +10,9 @@
  * in both places - same for the Trigger Tags field, wired to DB.touchTrigger/
  * getAllTriggers instead. The Awareness Level/Time of Day option lists
  * (AWARENESS_LEVELS/TIME_OF_DAY_OPTIONS) live on LogView, not here, since
- * Log is the screen that defines them.
+ * Log is the screen that defines them. The modal also edits Occurrences (see
+ * js/log.js for what that field means) - the list shows it as a "×N" badge
+ * next to the severity badge, only when it's more than 1.
  */
 const TimelineView = (() => {
   const HEATMAP_WEEKS = 52;
@@ -31,6 +33,7 @@ const TimelineView = (() => {
   let editSelectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
   let editSelectedConditions = new Set();
   let editSelectedSeverity = null;
+  let editSelectedOccurrenceCount = 1; // never 0/null - an entry always represents at least 1 occurrence
   let editSelectedAwareness = null;
   let editSelectedTimeOfDay = null;
   let editSelectedTriggerTags = new Set(); // never reassigned, same reasoning as editSelectedTags
@@ -88,6 +91,14 @@ const TimelineView = (() => {
             <div class="field">
               <label>Severity</label>
               <div id="modal-severity-row" class="severity-row"></div>
+            </div>
+            <div class="field">
+              <label>Occurrences</label>
+              <div class="occurrence-stepper">
+                <button type="button" id="modal-occurrence-decrement" class="stepper-btn" aria-label="Decrease occurrences">−</button>
+                <span id="modal-occurrence-count-display" class="stepper-value">1</span>
+                <button type="button" id="modal-occurrence-increment" class="stepper-btn" aria-label="Increase occurrences">+</button>
+              </div>
             </div>
             <div class="field">
               <label>Duration</label>
@@ -482,13 +493,22 @@ const TimelineView = (() => {
       date.textContent = formatDateTime(entry.timestamp);
       header.appendChild(date);
 
+      const badges = document.createElement("div");
+      badges.className = "timeline-item-badges";
       if (entry.severity) {
         const sev = document.createElement("span");
         sev.className = "severity-badge";
         sev.dataset.severity = String(entry.severity);
         sev.textContent = `Sev ${entry.severity}`;
-        header.appendChild(sev);
+        badges.appendChild(sev);
       }
+      if (entry.occurrenceCount > 1) {
+        const occ = document.createElement("span");
+        occ.className = "occurrence-badge";
+        occ.textContent = `×${entry.occurrenceCount}`;
+        badges.appendChild(occ);
+      }
+      if (badges.children.length) header.appendChild(badges);
 
       item.appendChild(header);
 
@@ -568,6 +588,12 @@ const TimelineView = (() => {
     renderList();
   }
 
+  /** Just updates the displayed count and the decrement button's disabled state - the stepper itself isn't rebuilt. */
+  function renderModalOccurrenceCount() {
+    container.querySelector("#modal-occurrence-count-display").textContent = String(editSelectedOccurrenceCount);
+    container.querySelector("#modal-occurrence-decrement").disabled = editSelectedOccurrenceCount <= 1;
+  }
+
   /** Renders the modal's Condition + Severity + Awareness + Time of Day pickers (Tags is handled separately by modalTagField). */
   function renderModalConditionAndSeverity() {
     Pickers.renderConditionChips(container.querySelector("#modal-condition-chips"), conditions, editSelectedConditions, (name) => {
@@ -638,6 +664,7 @@ const TimelineView = (() => {
     (entry.tags || []).forEach((t) => editSelectedTags.add(t));
     editSelectedConditions = new Set(entry.conditions || []);
     editSelectedSeverity = entry.severity ?? null;
+    editSelectedOccurrenceCount = entry.occurrenceCount || 1;
     editSelectedAwareness = entry.awarenessLevel ?? null;
     editSelectedTimeOfDay = entry.timeOfDay ?? null;
     editSelectedTriggerTags.clear();
@@ -651,6 +678,7 @@ const TimelineView = (() => {
     if (modalTagField) modalTagField.render();
     if (modalTriggerField) modalTriggerField.render();
     renderModalConditionAndSeverity();
+    renderModalOccurrenceCount();
     resetDeleteArm();
     container.querySelector("#entry-modal").classList.add("is-open");
   }
@@ -694,6 +722,7 @@ const TimelineView = (() => {
         tags: Array.from(editSelectedTags),
         conditions: Array.from(editSelectedConditions),
         severity: editSelectedSeverity,
+        occurrenceCount: editSelectedOccurrenceCount,
         note,
         durationMinutes,
         durationEstimated,
@@ -825,6 +854,14 @@ const TimelineView = (() => {
     container.querySelector("#modal-note-input").addEventListener("input", () => {
       clearTimeout(modalSuggestionDebounceTimer);
       modalSuggestionDebounceTimer = setTimeout(maybeRefreshModalSuggestions, 250);
+    });
+    container.querySelector("#modal-occurrence-decrement").addEventListener("click", () => {
+      editSelectedOccurrenceCount = Math.max(1, editSelectedOccurrenceCount - 1);
+      renderModalOccurrenceCount();
+    });
+    container.querySelector("#modal-occurrence-increment").addEventListener("click", () => {
+      editSelectedOccurrenceCount += 1;
+      renderModalOccurrenceCount();
     });
     // Tapping the dimmed backdrop (not the sheet itself) closes the modal, like a native sheet.
     modal.addEventListener("click", (e) => {
