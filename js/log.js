@@ -17,17 +17,37 @@
  * distinct same-day symptom entries is already how this app models repeated
  * episodes, rather than as a date range.
  */
+const AWARENESS_LEVELS = [
+  { value: "alert", label: "Alert" },
+  { value: "drowsy", label: "Drowsy" },
+  { value: "disoriented", label: "Disoriented" },
+  { value: "semi-conscious", label: "Semi-conscious" },
+  { value: "unconscious", label: "Unconscious" },
+];
+const TIME_OF_DAY_OPTIONS = [
+  { value: "on-wake", label: "On Waking" },
+  { value: "morning", label: "Morning" },
+  { value: "evening", label: "Evening" },
+  { value: "on-sleep", label: "On Falling Asleep" },
+  { value: "during-sleep", label: "During Sleep" },
+];
+
 const LogView = (() => {
   let container;
   let selectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
   let selectedConditions = new Set();
   let selectedSeverity = null;
+  let selectedAwareness = null;
+  let selectedTimeOfDay = null;
+  let selectedTriggerTags = new Set(); // never reassigned, same reasoning as selectedTags
   let allTags = [];
   let allConditions = [];
+  let allTriggers = [];
   let allEntries = [];
   let confirmationTimer = null;
   let suggestionDebounceTimer = null;
   let tagField = null;
+  let triggerField = null;
 
   let selectedFactor = new Set(); // at most 1 entry - single-select via clear-then-add, like Reports' symptom picker
   let allFactors = [];
@@ -55,6 +75,31 @@ const LogView = (() => {
         <div class="field">
           <label>Severity</label>
           <div id="severity-row" class="severity-row"></div>
+        </div>
+
+        <div class="field">
+          <label>Duration</label>
+          <div class="duration-row">
+            <input type="number" id="duration-input" min="0" placeholder="Minutes" />
+            <label class="duration-estimated-label">
+              <input type="checkbox" id="duration-estimated-input" /> Estimated
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Awareness Level</label>
+          <div id="awareness-row" class="chip-row"></div>
+        </div>
+
+        <div class="field">
+          <label>Time of Day</label>
+          <div id="time-of-day-row" class="chip-row"></div>
+        </div>
+
+        <div class="field">
+          <label>Trigger Tags</label>
+          <div id="triggers-field"></div>
         </div>
 
         <div class="field">
@@ -121,20 +166,34 @@ const LogView = (() => {
     });
   }
 
+  function renderAwareness() {
+    Pickers.renderSingleSelectChips(container.querySelector("#awareness-row"), AWARENESS_LEVELS, () => selectedAwareness, (val) => {
+      selectedAwareness = val;
+    });
+  }
+
+  function renderTimeOfDay() {
+    Pickers.renderSingleSelectChips(container.querySelector("#time-of-day-row"), TIME_OF_DAY_OPTIONS, () => selectedTimeOfDay, (val) => {
+      selectedTimeOfDay = val;
+    });
+  }
+
   /** Recomputes tag suggestions if smart mode is active; safe to call before init() completes. */
   function maybeRefreshSuggestions() {
     if (tagField) tagField.refreshSuggestions();
   }
 
   async function loadPickers() {
-    [allTags, allConditions, allEntries, allFactors, allFactorEntries] = await Promise.all([
+    [allTags, allConditions, allEntries, allFactors, allFactorEntries, allTriggers] = await Promise.all([
       DB.getAllTags(),
       DB.getAllConditions(),
       DB.getAllEntries(),
       DB.getAllFactors(),
       DB.getAllFactorEntries(),
+      DB.getAllTriggers(),
     ]);
     if (tagField) tagField.render();
+    if (triggerField) triggerField.render();
     renderConditionChips();
     renderFactorChips();
     renderRecentFactors();
@@ -159,11 +218,19 @@ const LogView = (() => {
     selectedTags.clear();
     selectedConditions = new Set();
     selectedSeverity = null;
+    selectedAwareness = null;
+    selectedTimeOfDay = null;
+    selectedTriggerTags.clear();
     container.querySelector("#note-input").value = "";
     container.querySelector("#timestamp-input").value = DateUtils.nowForInput();
+    container.querySelector("#duration-input").value = "";
+    container.querySelector("#duration-estimated-input").checked = false;
     if (tagField) tagField.render();
+    if (triggerField) triggerField.render();
     renderConditionChips();
     renderSeverity();
+    renderAwareness();
+    renderTimeOfDay();
   }
 
   async function handleSubmit(event) {
@@ -176,8 +243,11 @@ const LogView = (() => {
       const note = container.querySelector("#note-input").value.trim();
       const timestampInput = container.querySelector("#timestamp-input").value;
       const timestamp = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+      const durationRaw = container.querySelector("#duration-input").value;
+      const durationMinutes = durationRaw === "" ? null : Number(durationRaw);
+      const durationEstimated = container.querySelector("#duration-estimated-input").checked;
 
-      // Also corrects a tag/condition's firstUsed/createdAt backwards if this
+      // Also corrects a tag/condition/trigger's firstUsed backwards if this
       // entry's (possibly backdated) timestamp predates it - e.g. retroactively
       // logging a new tag for something that happened last week, not today.
       for (const name of selectedTags) {
@@ -186,6 +256,9 @@ const LogView = (() => {
       for (const name of selectedConditions) {
         await DB.touchCondition(name, timestamp);
       }
+      for (const name of selectedTriggerTags) {
+        await DB.touchTrigger(name, timestamp);
+      }
 
       await DB.addEntry({
         timestamp,
@@ -193,6 +266,11 @@ const LogView = (() => {
         conditions: Array.from(selectedConditions),
         severity: selectedSeverity,
         note,
+        durationMinutes,
+        durationEstimated,
+        awarenessLevel: selectedAwareness,
+        timeOfDay: selectedTimeOfDay,
+        triggerTags: Array.from(selectedTriggerTags),
       });
 
       showConfirmation();
@@ -361,6 +439,7 @@ const LogView = (() => {
   /** Called by the Settings modal when the tag picker mode changes; safe to call even before init(). */
   function refreshTagPicker() {
     if (tagField) tagField.render();
+    if (triggerField) triggerField.render();
   }
 
   async function init() {
@@ -380,6 +459,19 @@ const LogView = (() => {
       },
     });
 
+    triggerField = TagPickerField.create(container.querySelector("#triggers-field"), {
+      selectedTags: selectedTriggerTags,
+      getAllTags: () => allTriggers,
+      getAllEntries: () => allEntries,
+      getSelectedConditions: () => selectedConditions,
+      getNoteText: () => container.querySelector("#note-input").value,
+      createTag: async (name) => {
+        const trigger = await DB.touchTrigger(name);
+        if (!allTriggers.some((t) => t.name === trigger.name)) allTriggers.push(trigger);
+        return trigger;
+      },
+    });
+
     container.querySelector("#log-form").addEventListener("submit", handleSubmit);
     container.querySelector("#add-condition-btn").addEventListener("click", handleAddCondition);
     container.querySelector("#new-condition-input").addEventListener("keydown", (e) => {
@@ -394,6 +486,8 @@ const LogView = (() => {
     });
 
     renderSeverity();
+    renderAwareness();
+    renderTimeOfDay();
     container.querySelector("#timestamp-input").value = DateUtils.nowForInput();
 
     container.querySelector("#factor-form").addEventListener("submit", handleFactorSubmit);
@@ -413,5 +507,5 @@ const LogView = (() => {
   // to, not just at first load - otherwise a tag created elsewhere (e.g.
   // Data tab's import) would stay invisible here until a full page reload,
   // since this view's own copies of that data are never told they've gone stale.
-  return { init, onShow: loadPickers, refreshTagPicker };
+  return { init, onShow: loadPickers, refreshTagPicker, AWARENESS_LEVELS, TIME_OF_DAY_OPTIONS };
 })();

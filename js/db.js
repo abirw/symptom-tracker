@@ -1,8 +1,10 @@
 /**
- * Hand-rolled IndexedDB wrapper — no external dependency. Exposes six object
- * stores: `entries` (the logged symptom entries), `tags` and `conditions`
- * (both "grow as you go" lookup lists per SPEC.md), `factorEntries`/`factors`
- * — a parallel, simpler log for things like period, heatwaves, or medication
+ * Hand-rolled IndexedDB wrapper — no external dependency. Exposes seven
+ * object stores: `entries` (the logged symptom entries), `tags`, `conditions`,
+ * and `triggers` (all "grow as you go" lookup lists per SPEC.md - triggers
+ * are a separate taxonomy from tags, since a cause like "bright light" is
+ * conceptually different from a symptom), `factorEntries`/`factors` — a
+ * parallel, simpler log for things like period, heatwaves, or medication
  * changes that aren't symptoms themselves but help explain symptom patterns
  * (deliberately kept separate from `entries`) — and `temperatures`, one
  * value per calendar day, imported from a text file rather than logged by
@@ -12,7 +14,7 @@
  */
 const DB = (() => {
   const DB_NAME = "symptom-tracker";
-  const DB_VERSION = 4;
+  const DB_VERSION = 5;
 
   let dbPromise = null;
 
@@ -86,6 +88,15 @@ const DB = (() => {
           // the affected days via `put`, with no separate dedup step needed.
           db.createObjectStore("temperatures", { keyPath: "date" });
         }
+
+        if (event.oldVersion < 5) {
+          // v4 -> v5: adds the trigger-tags lookup list (a separate taxonomy
+          // from `tags` - causes, not symptoms) alongside new optional entry
+          // fields (duration, awareness level, time of day, trigger tags)
+          // that are just plain fields on the existing `entries` records, so
+          // they need no schema change of their own.
+          db.createObjectStore("triggers", { keyPath: "name" });
+        }
       };
 
       req.onsuccess = () => resolve(req.result);
@@ -135,6 +146,11 @@ const DB = (() => {
       conditions: entry.conditions || [],
       severity: entry.severity ?? null,
       note: entry.note || "",
+      durationMinutes: entry.durationMinutes ?? null,
+      durationEstimated: entry.durationEstimated ?? false,
+      awarenessLevel: entry.awarenessLevel ?? null,
+      timeOfDay: entry.timeOfDay ?? null,
+      triggerTags: entry.triggerTags || [],
     };
     const store = await tx("entries", "readwrite");
     await promisifyRequest(store.add(record));
@@ -394,6 +410,32 @@ const DB = (() => {
     return promisifyRequest(store.getAll());
   }
 
+  // --- Triggers (a separate "grow as you go" taxonomy from tags - causes, not symptoms) ---
+
+  /** Same idempotent create-if-missing pattern as touchFactor, for the trigger lookup list. */
+  async function touchTrigger(name, occurredAt = new Date().toISOString()) {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const store = await tx("triggers", "readwrite");
+    const existing = await promisifyRequest(store.get(trimmed));
+    if (!existing) {
+      const record = { name: trimmed, firstUsed: occurredAt };
+      await promisifyRequest(store.add(record));
+      return record;
+    }
+    if (new Date(occurredAt) < new Date(existing.firstUsed)) {
+      const corrected = { ...existing, firstUsed: occurredAt };
+      await promisifyRequest(store.put(corrected));
+      return corrected;
+    }
+    return existing;
+  }
+
+  async function getAllTriggers() {
+    const store = await tx("triggers", "readonly");
+    return promisifyRequest(store.getAll());
+  }
+
   /** Inserts `record` if missing, or corrects `dateField` backward if `incomingDate` predates the stored one. */
   async function upsertEarliest(store, name, dateField, incomingDate, extraDefaults) {
     const trimmed = (name || "").trim();
@@ -588,6 +630,8 @@ const DB = (() => {
     addFactorEntry,
     deleteFactorEntry,
     getAllFactorEntries,
+    touchTrigger,
+    getAllTriggers,
     getAllTemperatures,
     bulkImportTemperatures,
     bulkImportFactorEntries,

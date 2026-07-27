@@ -254,6 +254,7 @@ button:active,
 /* Font-size is kept at 16px (1rem) minimum on every text input/select below -
    anything smaller makes iOS Safari auto-zoom the page on focus. */
 input[type="text"],
+input[type="number"],
 input[type="datetime-local"],
 textarea {
   width: 100%;
@@ -283,6 +284,25 @@ textarea {
 .severity-row {
   display: flex;
   gap: 0.5rem;
+}
+
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.duration-row input[type="number"] {
+  width: 6rem;
+  flex: none;
+}
+
+.duration-estimated-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--text-dim);
 }
 
 .severity-chip {
@@ -639,6 +659,17 @@ textarea {
 .chip-condition {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.chip-trigger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.timeline-item-detail {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  margin-bottom: 0.3rem;
 }
 
 .timeline-item-note {

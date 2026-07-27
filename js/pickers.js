@@ -71,5 +71,32 @@ const Pickers = (() => {
     }
   }
 
-  return { renderTagChips, renderConditionChips, renderSeverity };
+  /**
+   * Single-select chip row for a fixed small option list (Awareness Level,
+   * Time of Day) - tapping a chip selects it, tapping the already-selected
+   * chip clears it back to "not set". Same full-rebuild-per-click shape as
+   * `renderSeverity`, generalized to an arbitrary {value, label} option list.
+   * @param {HTMLElement} wrap
+   * @param {{value: string, label: string}[]} options
+   * @param {() => string|null} getSelected
+   * @param {(value: string|null) => void} onSelect
+   */
+  function renderSingleSelectChips(wrap, options, getSelected, onSelect) {
+    wrap.innerHTML = "";
+    const current = getSelected();
+    options.forEach((opt) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip";
+      btn.textContent = opt.label;
+      btn.setAttribute("aria-pressed", current === opt.value ? "true" : "false");
+      btn.addEventListener("click", () => {
+        onSelect(current === opt.value ? null : opt.value);
+        renderSingleSelectChips(wrap, options, getSelected, onSelect);
+      });
+      wrap.appendChild(btn);
+    });
+  }
+
+  return { renderTagChips, renderConditionChips, renderSeverity, renderSingleSelectChips };
 })();

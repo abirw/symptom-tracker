@@ -6,7 +6,10 @@
  *
  * The modal's Tags field is TagPickerField (tag-picker-field.js), shared
  * with the Log screen so the classic-vs-smart toggle behaves identically
- * in both places.
+ * in both places - same for the Trigger Tags field, wired to DB.touchTrigger/
+ * getAllTriggers instead. The Awareness Level/Time of Day option lists
+ * (AWARENESS_LEVELS/TIME_OF_DAY_OPTIONS) live on LogView, not here, since
+ * Log is the screen that defines them.
  */
 const TimelineView = (() => {
   const HEATMAP_WEEKS = 52;
@@ -15,6 +18,7 @@ const TimelineView = (() => {
   let entries = [];
   let tags = [];
   let conditions = [];
+  let triggers = [];
   let filterTag = "";
   let filterCondition = "";
   let selectedDay = null; // "YYYY-MM-DD" from tapping a heatmap cell, or null
@@ -24,8 +28,12 @@ const TimelineView = (() => {
   let editSelectedTags = new Set(); // never reassigned - .clear()'d, so TagPickerField's reference stays valid
   let editSelectedConditions = new Set();
   let editSelectedSeverity = null;
+  let editSelectedAwareness = null;
+  let editSelectedTimeOfDay = null;
+  let editSelectedTriggerTags = new Set(); // never reassigned, same reasoning as editSelectedTags
   let deleteArmed = false; // first Delete tap arms it; a second tap actually deletes (see handleDelete)
   let modalTagField = null;
+  let modalTriggerField = null;
   let modalSuggestionDebounceTimer = null;
 
   function render() {
@@ -75,6 +83,27 @@ const TimelineView = (() => {
             <div class="field">
               <label>Severity</label>
               <div id="modal-severity-row" class="severity-row"></div>
+            </div>
+            <div class="field">
+              <label>Duration</label>
+              <div class="duration-row">
+                <input type="number" id="modal-duration-input" min="0" placeholder="Minutes" />
+                <label class="duration-estimated-label">
+                  <input type="checkbox" id="modal-duration-estimated-input" /> Estimated
+                </label>
+              </div>
+            </div>
+            <div class="field">
+              <label>Awareness Level</label>
+              <div id="modal-awareness-row" class="chip-row"></div>
+            </div>
+            <div class="field">
+              <label>Time of Day</label>
+              <div id="modal-time-of-day-row" class="chip-row"></div>
+            </div>
+            <div class="field">
+              <label>Trigger Tags</label>
+              <div id="modal-triggers-field"></div>
             </div>
             <div class="field">
               <label for="modal-note-input">Note</label>
@@ -428,7 +457,7 @@ const TimelineView = (() => {
 
       item.appendChild(header);
 
-      if ((entry.tags && entry.tags.length) || (entry.conditions && entry.conditions.length)) {
+      if ((entry.tags && entry.tags.length) || (entry.conditions && entry.conditions.length) || (entry.triggerTags && entry.triggerTags.length)) {
         const tagRow = document.createElement("div");
         tagRow.className = "timeline-item-tags";
         (entry.tags || []).forEach((name) => {
@@ -443,7 +472,32 @@ const TimelineView = (() => {
           condChip.textContent = name;
           tagRow.appendChild(condChip);
         });
+        (entry.triggerTags || []).forEach((name) => {
+          const triggerChip = document.createElement("span");
+          triggerChip.className = "chip chip-static chip-trigger";
+          triggerChip.textContent = name;
+          tagRow.appendChild(triggerChip);
+        });
         item.appendChild(tagRow);
+      }
+
+      const detailParts = [];
+      if (entry.durationMinutes != null) {
+        detailParts.push(`${entry.durationMinutes} min${entry.durationEstimated ? " (est.)" : ""}`);
+      }
+      if (entry.awarenessLevel) {
+        const level = LogView.AWARENESS_LEVELS.find((l) => l.value === entry.awarenessLevel);
+        detailParts.push(level ? level.label : entry.awarenessLevel);
+      }
+      if (entry.timeOfDay) {
+        const tod = LogView.TIME_OF_DAY_OPTIONS.find((t) => t.value === entry.timeOfDay);
+        detailParts.push(tod ? tod.label : entry.timeOfDay);
+      }
+      if (detailParts.length > 0) {
+        const detail = document.createElement("div");
+        detail.className = "timeline-item-detail";
+        detail.textContent = detailParts.join(" · ");
+        item.appendChild(detail);
       }
 
       if (entry.note) {
@@ -459,7 +513,12 @@ const TimelineView = (() => {
   }
 
   async function loadData() {
-    [entries, tags, conditions] = await Promise.all([DB.getAllEntries(), DB.getAllTags(), DB.getAllConditions()]);
+    [entries, tags, conditions, triggers] = await Promise.all([
+      DB.getAllEntries(),
+      DB.getAllTags(),
+      DB.getAllConditions(),
+      DB.getAllTriggers(),
+    ]);
     populateFilterOptions();
     // Also refresh the edit modal's pickers here, not just in openEntry(): if
     // the modal was left open when the user switched tabs (it isn't actually
@@ -467,13 +526,14 @@ const TimelineView = (() => {
     // Timeline would otherwise leave it showing whatever tags/conditions
     // existed the last time it was rendered, even after a fresh loadData().
     if (modalTagField) modalTagField.render();
+    if (modalTriggerField) modalTriggerField.render();
     renderModalConditionAndSeverity();
     renderHeatmap();
     renderDayFilterNote();
     renderList();
   }
 
-  /** Renders the modal's Condition + Severity pickers (Tags is handled separately by modalTagField). */
+  /** Renders the modal's Condition + Severity + Awareness + Time of Day pickers (Tags is handled separately by modalTagField). */
   function renderModalConditionAndSeverity() {
     Pickers.renderConditionChips(container.querySelector("#modal-condition-chips"), conditions, editSelectedConditions, (name) => {
       if (editSelectedConditions.has(name)) {
@@ -488,6 +548,22 @@ const TimelineView = (() => {
       () => editSelectedSeverity,
       (val) => {
         editSelectedSeverity = editSelectedSeverity === val ? null : val;
+      }
+    );
+    Pickers.renderSingleSelectChips(
+      container.querySelector("#modal-awareness-row"),
+      LogView.AWARENESS_LEVELS,
+      () => editSelectedAwareness,
+      (val) => {
+        editSelectedAwareness = val;
+      }
+    );
+    Pickers.renderSingleSelectChips(
+      container.querySelector("#modal-time-of-day-row"),
+      LogView.TIME_OF_DAY_OPTIONS,
+      () => editSelectedTimeOfDay,
+      (val) => {
+        editSelectedTimeOfDay = val;
       }
     );
   }
@@ -527,11 +603,18 @@ const TimelineView = (() => {
     (entry.tags || []).forEach((t) => editSelectedTags.add(t));
     editSelectedConditions = new Set(entry.conditions || []);
     editSelectedSeverity = entry.severity ?? null;
+    editSelectedAwareness = entry.awarenessLevel ?? null;
+    editSelectedTimeOfDay = entry.timeOfDay ?? null;
+    editSelectedTriggerTags.clear();
+    (entry.triggerTags || []).forEach((t) => editSelectedTriggerTags.add(t));
 
     container.querySelector("#modal-note-input").value = entry.note || "";
     container.querySelector("#modal-timestamp-input").value = DateUtils.toLocalInputValue(entry.timestamp);
+    container.querySelector("#modal-duration-input").value = entry.durationMinutes != null ? String(entry.durationMinutes) : "";
+    container.querySelector("#modal-duration-estimated-input").checked = Boolean(entry.durationEstimated);
 
     if (modalTagField) modalTagField.render();
+    if (modalTriggerField) modalTriggerField.render();
     renderModalConditionAndSeverity();
     resetDeleteArm();
     container.querySelector("#entry-modal").classList.add("is-open");
@@ -554,14 +637,20 @@ const TimelineView = (() => {
       const note = container.querySelector("#modal-note-input").value.trim();
       const timestampInput = container.querySelector("#modal-timestamp-input").value;
       const timestamp = timestampInput ? new Date(timestampInput).toISOString() : editingEntry.timestamp;
+      const durationRaw = container.querySelector("#modal-duration-input").value;
+      const durationMinutes = durationRaw === "" ? null : Number(durationRaw);
+      const durationEstimated = container.querySelector("#modal-duration-estimated-input").checked;
 
       // Corrects firstUsed/createdAt backwards if the timestamp was edited to
-      // something earlier than a selected tag/condition's known start.
+      // something earlier than a selected tag/condition/trigger's known start.
       for (const name of editSelectedTags) {
         await DB.touchTag(name, timestamp);
       }
       for (const name of editSelectedConditions) {
         await DB.touchCondition(name, timestamp);
+      }
+      for (const name of editSelectedTriggerTags) {
+        await DB.touchTrigger(name, timestamp);
       }
 
       const updated = {
@@ -571,6 +660,11 @@ const TimelineView = (() => {
         conditions: Array.from(editSelectedConditions),
         severity: editSelectedSeverity,
         note,
+        durationMinutes,
+        durationEstimated,
+        awarenessLevel: editSelectedAwareness,
+        timeOfDay: editSelectedTimeOfDay,
+        triggerTags: Array.from(editSelectedTriggerTags),
       };
 
       await DB.updateEntry(updated);
@@ -657,6 +751,21 @@ const TimelineView = (() => {
       },
     });
 
+    modalTriggerField = TagPickerField.create(container.querySelector("#modal-triggers-field"), {
+      selectedTags: editSelectedTriggerTags,
+      getAllTags: () => triggers,
+      getAllEntries: () => entries,
+      getSelectedConditions: () => editSelectedConditions,
+      getNoteText: () => container.querySelector("#modal-note-input").value,
+      createTag: async (name) => {
+        const timestampInput = container.querySelector("#modal-timestamp-input").value;
+        const occurredAt = timestampInput ? new Date(timestampInput).toISOString() : new Date().toISOString();
+        const trigger = await DB.touchTrigger(name, occurredAt);
+        if (!triggers.some((t) => t.name === trigger.name)) triggers.push(trigger);
+        return trigger;
+      },
+    });
+
     const modal = container.querySelector("#entry-modal");
     container.querySelector("#modal-close-btn").addEventListener("click", closeModal);
     container.querySelector("#modal-delete-btn").addEventListener("click", handleDelete);
@@ -686,6 +795,7 @@ const TimelineView = (() => {
   /** Called by the Settings modal when the tag picker mode changes; safe to call even before init(). */
   function refreshTagPicker() {
     if (modalTagField) modalTagField.render();
+    if (modalTriggerField) modalTriggerField.render();
   }
 
   return { init, onShow: loadData, refreshTagPicker };
