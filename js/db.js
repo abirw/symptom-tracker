@@ -14,7 +14,7 @@
  */
 const DB = (() => {
   const DB_NAME = "symptom-tracker";
-  const DB_VERSION = 5;
+  const DB_VERSION = 6;
 
   let dbPromise = null;
 
@@ -33,6 +33,13 @@ const DB = (() => {
       req.onupgradeneeded = (event) => {
         const db = event.target.result;
         const transaction = event.target.transaction;
+        // Any migration that needs to rewrite existing entry records pushes a
+        // transform here instead of opening its own cursor - two independent
+        // cursors iterating/updating the same store within one transaction
+        // race each other (whichever's `cursor.update()` lands last wins,
+        // silently discarding the other's fix), so every entries-rewriting
+        // migration is applied together in a single pass at the end.
+        const entryTransforms = [];
 
         if (event.oldVersion < 1) {
           const entries = db.createObjectStore("entries", { keyPath: "id" });
@@ -58,17 +65,12 @@ const DB = (() => {
             entries.createIndex("conditions", "conditions", { multiEntry: true });
           }
 
-          entries.openCursor().onsuccess = (cursorEvent) => {
-            const cursor = cursorEvent.target.result;
-            if (!cursor) return;
-            const record = cursor.value;
-            if (!Array.isArray(record.conditions)) {
-              record.conditions = record.condition ? [record.condition] : [];
-              delete record.condition;
-              cursor.update(record);
-            }
-            cursor.continue();
-          };
+          entryTransforms.push((record) => {
+            if (Array.isArray(record.conditions)) return false;
+            record.conditions = record.condition ? [record.condition] : [];
+            delete record.condition;
+            return true;
+          });
         }
 
         if (event.oldVersion < 3) {
@@ -96,6 +98,31 @@ const DB = (() => {
           // that are just plain fields on the existing `entries` records, so
           // they need no schema change of their own.
           db.createObjectStore("triggers", { keyPath: "name" });
+        }
+
+        if (event.oldVersion < 6) {
+          // v5 -> v6: backfills occurrenceCount = 1 onto every existing entry
+          // that doesn't already have one set, so it's an explicit, visible
+          // field in the JSON export for every entry - not just ones created
+          // or edited after this feature shipped. addEntry/updateEntry
+          // already default it for anything written from here on.
+          entryTransforms.push((record) => {
+            if (record.occurrenceCount) return false;
+            record.occurrenceCount = 1;
+            return true;
+          });
+        }
+
+        if (entryTransforms.length > 0) {
+          const entries = transaction.objectStore("entries");
+          entries.openCursor().onsuccess = (cursorEvent) => {
+            const cursor = cursorEvent.target.result;
+            if (!cursor) return;
+            const record = cursor.value;
+            const changed = entryTransforms.reduce((any, transform) => transform(record) || any, false);
+            if (changed) cursor.update(record);
+            cursor.continue();
+          };
         }
       };
 
@@ -521,7 +548,12 @@ const DB = (() => {
     }
 
     for (const e of entries) {
-      await promisifyRequest(entryStore.put(e));
+      // Defaults occurrenceCount for a restored entry the same way addEntry
+      // does for a newly-logged one - covers both an older backup (exported
+      // before this field existed) and a fresh install's v5->v6 migration
+      // never having a chance to run on entries that arrive via import
+      // instead of already being in the store when that migration runs.
+      await promisifyRequest(entryStore.put({ ...e, occurrenceCount: e.occurrenceCount || 1 }));
     }
     for (const fe of factorEntryRecords) {
       await promisifyRequest(factorEntryStore.put(fe));
