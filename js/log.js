@@ -27,6 +27,7 @@ const AWARENESS_LEVELS = [
 const TIME_OF_DAY_OPTIONS = [
   { value: "on-wake", label: "On Waking" },
   { value: "morning", label: "Morning" },
+  { value: "afternoon", label: "Afternoon" },
   { value: "evening", label: "Evening" },
   { value: "on-sleep", label: "On Falling Asleep" },
   { value: "during-sleep", label: "During Sleep" },

@@ -69,6 +69,21 @@ const Analysis = (() => {
   }
 
   /**
+   * Counts entries per time-of-day value, in the order `options` gives them
+   * (Log's TIME_OF_DAY_OPTIONS, passed in by the caller so this stays
+   * framework-free rather than importing LogView's list directly); entries
+   * with no timeOfDay set are excluded, same exclusion rule as
+   * computeSeverityDistribution.
+   */
+  function computeTimeOfDayDistribution(entries, options) {
+    const counts = new Map(options.map((o) => [o.value, 0]));
+    entries.forEach((e) => {
+      if (e.timeOfDay && counts.has(e.timeOfDay)) counts.set(e.timeOfDay, counts.get(e.timeOfDay) + 1);
+    });
+    return options.map((o) => ({ value: o.value, label: o.label, count: counts.get(o.value) }));
+  }
+
+  /**
    * For every calendar day `focusTagName` occurred, tallies every *other* tag
    * that also appeared that day (any entry that day, not just the same
    * entry). Returns a ranked list of co-occurring symptoms.
@@ -358,6 +373,7 @@ const Analysis = (() => {
   return {
     computeDayOfWeekDistribution,
     computeSeverityDistribution,
+    computeTimeOfDayDistribution,
     computeCoOccurrence,
     computeFactorCoOccurrence,
     computeSymptomsOnFactorDays,

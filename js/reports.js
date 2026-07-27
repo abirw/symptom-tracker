@@ -12,6 +12,10 @@
  * medication changes, etc.) active on the same days as the selected symptom.
  * Predictive Factors is the lagged counterpart - a factor 1-3 days *before*
  * the symptom, for patterns that show up with a delay rather than same-day.
+ * Time of Day (an explicit field, not inferred from the logged timestamp -
+ * see js/log.js's TIME_OF_DAY_OPTIONS) is hidden entirely when no entry in
+ * the report's window has one set, since it's optional and older entries
+ * predate the field.
  *
  * Selecting a Factor instead of a Symptom flips the focus around: "Symptoms
  * on These Days" is the mirror image of Co-occurring Factors, and the
@@ -364,6 +368,21 @@ const ReportsView = (() => {
     });
   }
 
+  /** Hidden entirely when no entry in the pool has a Time of Day set yet - an explicit field, so older entries just won't have one. */
+  function renderTimeOfDayDistribution(bodyEl, focusEntries, printMode) {
+    const dist = Analysis.computeTimeOfDayDistribution(focusEntries, LogView.TIME_OF_DAY_OPTIONS);
+    if (!dist.some((d) => d.count > 0)) return;
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="chart-card"><h3>Time of Day</h3><div class="chart-wrap"><canvas id="report-tod-chart"></canvas></div></div>`
+    );
+    makeChart(bodyEl.querySelector("#report-tod-chart"), {
+      type: "bar",
+      data: { labels: dist.map((d) => d.label), datasets: [{ data: dist.map((d) => d.count), backgroundColor: SERIES_COLOR, borderRadius: 4 }] },
+      options: chartOptions({ beginAtZero: true, stepSize: 1 }, false, printMode),
+    });
+  }
+
   function renderStreaksCard(bodyEl, streaks) {
     bodyEl.insertAdjacentHTML(
       "beforeend",
@@ -657,6 +676,7 @@ const ReportsView = (() => {
     renderFrequencySeverityCharts(bodyEl, focusEntries, tagName, start, end, printMode);
     renderSeverityDistribution(bodyEl, focusEntries, printMode);
     renderDayOfWeek(bodyEl, focusEntries, printMode);
+    renderTimeOfDayDistribution(bodyEl, focusEntries, printMode);
     renderStreaksCard(bodyEl, streaks);
     renderCoOccurrence(bodyEl, windowedPool, tagName);
     renderCoOccurringFactors(bodyEl, windowedPool, tagName, windowedFactorEntries);
