@@ -557,6 +557,45 @@ const TrendsView = (() => {
   }
 
   /**
+   * Line/span factors have no real Chart.js dataset (they're drawn by
+   * FACTOR_MARKERS_PLUGIN's canvas overlay, not plotted data), so unlike a
+   * bar factor's dataset they'd never show up in the legend on their own -
+   * this builds the extra entries for them, deduped by name (a factor can
+   * produce several marker entries - one per occurrence bucket or per span
+   * cluster - but should only ever appear once in the legend).
+   */
+  function buildFactorLegendItems(markers) {
+    const seen = new Map();
+    markers.lines.forEach((l) => {
+      if (!seen.has(l.name)) seen.set(l.name, l.color);
+    });
+    markers.spans.forEach((s) => {
+      if (!seen.has(s.name)) seen.set(s.name, s.color);
+    });
+    return Array.from(seen.entries()).map(([name, color]) => ({
+      text: name,
+      fillStyle: color,
+      strokeStyle: color,
+      lineWidth: 0,
+    }));
+  }
+
+  /**
+   * Extends `chart`'s legend to also list any line/span factors currently
+   * overlaid on it (bar-type factors already show up for free - they're
+   * real datasets) and forces the legend on whenever there's anything to
+   * show; never turns it back off, since a chart's own dataset-based
+   * legend.display decision (compare mode, or a bar factor being present)
+   * is the floor this only adds to.
+   */
+  function applyFactorLegend(chart, markers) {
+    const extraItems = buildFactorLegendItems(markers);
+    chart.options.plugins.legend.labels.generateLabels = (chartInstance) =>
+      Chart.defaults.plugins.legend.labels.generateLabels(chartInstance).concat(extraItems);
+    if (extraItems.length > 0) chart.options.plugins.legend.display = true;
+  }
+
+  /**
    * For each selected factor whose display type is "line" or "span" (set via
    * Data tab's Manage Factors list - "bar" is handled separately by
    * computeBarFactorDatasets), computes what to draw as an overlay on top of
@@ -683,10 +722,12 @@ const TrendsView = (() => {
         };
         freqChart.options.plugins.legend.display = true;
       }
+      applyFactorLegend(freqChart, markers);
       freqChart.update();
     }
     if (sevChart) {
       sevChart.options.plugins.factorMarkers = markers;
+      applyFactorLegend(sevChart, markers);
       sevChart.update();
     }
 
