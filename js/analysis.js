@@ -131,6 +131,49 @@ const Analysis = (() => {
   }
 
   /**
+   * The mirror image of computeFactorCoOccurrence: for every day
+   * `focusFactorName` was active, tallies which symptom tags appeared that
+   * day (any entry, not just one) - "what commonly happens on these days"
+   * rather than "which factors show up on this symptom's days". Also
+   * reports the average severity of entries on those days vs the pool's
+   * overall average, the same severity-delta signal computeNoteWordFrequency
+   * already gives for note words.
+   */
+  function computeSymptomsOnFactorDays(factorEntries, focusFactorName, entries) {
+    const focusDayKeys = new Set(
+      factorEntries.filter((fe) => fe.name === focusFactorName).map((fe) => dayKey(fe.timestamp))
+    );
+    const totalDays = focusDayKeys.size;
+
+    const tagDayPresence = new Map(); // name -> Set of day keys
+    const onDayEntries = [];
+
+    entries.forEach((e) => {
+      const key = dayKey(e.timestamp);
+      if (!focusDayKeys.has(key)) return;
+      onDayEntries.push(e);
+      (e.tags || []).forEach((name) => {
+        if (!tagDayPresence.has(name)) tagDayPresence.set(name, new Set());
+        tagDayPresence.get(name).add(key);
+      });
+    });
+
+    const tags = [...tagDayPresence.entries()]
+      .map(([name, days]) => ({
+        name,
+        count: days.size,
+        percentOfDays: totalDays ? Math.round((days.size / totalDays) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    const avg = (list) => (list.length ? Math.round((list.reduce((s, e) => s + e.severity, 0) / list.length) * 10) / 10 : null);
+    const avgSeverityOnDays = avg(onDayEntries.filter((e) => e.severity != null));
+    const overallAvgSeverity = avg(entries.filter((e) => e.severity != null));
+
+    return { totalDays, tags, avgSeverityOnDays, overallAvgSeverity };
+  }
+
+  /**
    * For each factor, checks whether it was active exactly N days before each
    * of focusTagName's occurrence-days, for N from 1 to maxLagDays, and keeps
    * whichever lag matches the most days - "this factor is most predictive N
@@ -317,6 +360,7 @@ const Analysis = (() => {
     computeSeverityDistribution,
     computeCoOccurrence,
     computeFactorCoOccurrence,
+    computeSymptomsOnFactorDays,
     computeLaggedFactorCorrelation,
     computeStreaksAndGaps,
     computeClusters,
