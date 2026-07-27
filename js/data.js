@@ -19,6 +19,7 @@ const DataView = (() => {
   let container;
   let allTags = [];
   let allConditions = [];
+  let allFactors = []; // for the Manage Factors list (chart display type)
   let pendingStructuredImport = null; // { entries, tags, conditions, factorEntries, factors, temperatures } awaiting confirmation
   let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
@@ -328,7 +329,7 @@ const DataView = (() => {
   // ---- Import: plain-text extraction ----
 
   async function loadPickerData() {
-    [allTags, allConditions] = await Promise.all([DB.getAllTags(), DB.getAllConditions()]);
+    [allTags, allConditions, allFactors] = await Promise.all([DB.getAllTags(), DB.getAllConditions(), DB.getAllFactors()]);
   }
 
   async function handleTextFile(file) {
@@ -918,6 +919,71 @@ const DataView = (() => {
     });
   }
 
+  // ---- Manage Factors ----
+
+  const FACTOR_DISPLAY_TYPES = [
+    { value: "bar", label: "Bar" },
+    { value: "line", label: "Line" },
+    { value: "span", label: "Area" },
+  ];
+
+  function renderFactorManageList() {
+    const wrap = container.querySelector("#factor-manage-list");
+    wrap.innerHTML = "";
+
+    if (allFactors.length === 0) {
+      const p = document.createElement("p");
+      p.className = "placeholder";
+      p.textContent = "No factors yet.";
+      wrap.appendChild(p);
+      return;
+    }
+
+    allFactors
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((factor) => wrap.appendChild(buildFactorManageRow(factor)));
+  }
+
+  /** How a factor renders on Trends' charts: a bar count per bucket (default), a vertical line per occurrence, or a shaded date-range span. */
+  function buildFactorManageRow(factor) {
+    const row = document.createElement("div");
+    row.className = "tag-manage-row";
+
+    const info = document.createElement("div");
+    info.className = "tag-manage-info";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "tag-manage-name";
+    nameEl.textContent = factor.name;
+    info.appendChild(nameEl);
+
+    row.appendChild(info);
+
+    const typeRow = document.createElement("div");
+    typeRow.className = "chip-row factor-display-type-row";
+    const currentType = factor.displayType || "bar";
+    FACTOR_DISPLAY_TYPES.forEach((opt) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip";
+      btn.textContent = opt.label;
+      btn.setAttribute("aria-pressed", currentType === opt.value ? "true" : "false");
+      btn.addEventListener("click", async () => {
+        const updated = await DB.setFactorDisplayType(factor.name, opt.value);
+        if (updated) {
+          const idx = allFactors.findIndex((f) => f.name === factor.name);
+          if (idx !== -1) allFactors[idx] = updated;
+        }
+        renderFactorManageList();
+      });
+      typeRow.appendChild(btn);
+    });
+    row.appendChild(typeRow);
+
+    return row;
+  }
+
   // ---- Render + wiring ----
 
   function render() {
@@ -942,6 +1008,15 @@ const DataView = (() => {
         Rename a tag if the wording no longer fits — every entry using it updates automatically.
       </p>
       <div id="tag-manage-list" class="tag-manage-list"></div>
+
+      <hr class="section-divider" />
+      <h2 class="section-heading">Manage Factors</h2>
+      <p class="export-note" style="margin-top: 0">
+        How each factor renders on Trends' charts: Bar (a count per bucket, the default), Line (a
+        vertical marker at each occurrence - good for one-off things like a medication change), or
+        Area (a shaded date range across a recurring run of days - good for something like a period).
+      </p>
+      <div id="factor-manage-list" class="tag-manage-list"></div>
 
       <hr class="section-divider" />
       <h2 class="section-heading">Restore a backup</h2>
@@ -1077,6 +1152,7 @@ const DataView = (() => {
     await loadPickerData();
     await loadTagUsage();
     renderTagManageList();
+    renderFactorManageList();
   }
 
   async function onShow() {
@@ -1084,6 +1160,7 @@ const DataView = (() => {
     await loadPickerData();
     await loadTagUsage();
     renderTagManageList();
+    renderFactorManageList();
   }
 
   return { init, onShow };

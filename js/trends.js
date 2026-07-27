@@ -21,6 +21,13 @@
  * the same treatment: an always-on "Temperature" chart-card (bucket-averaged,
  * not summed) that only appears when at least one reading falls in the
  * current window - no filter toggle needed since there's just one series.
+ *
+ * Each factor has a display type (Data tab's "Manage Factors" list, default
+ * "bar"): "bar" factors stay in the Factor Activity chart-card above; "line"
+ * factors (e.g. a medication change) and "span" factors (e.g. a period) are
+ * instead drawn directly on top of the Frequency/Severity charts via a small
+ * custom Chart.js plugin, registered once below - that's where "did this
+ * correlate with what I was already looking at" is actually answerable.
  */
 const TrendsView = (() => {
   let container;
@@ -49,6 +56,57 @@ const TrendsView = (() => {
   // Cycled through by index for compare-mode series; index 0/1 intentionally
   // match the original single-series frequency (teal) / severity (red) colors.
   const SERIES_COLORS = ["#2fb8a1", "#e0665a", "#e0b84a", "#7aa6e0", "#c07ae0", "#8bbf4f", "#e08a45", "#5ad1c7"];
+
+  /** Reshapes factor entries into the {timestamp, tags} shape Analysis' generic day-based functions (computeClusters) expect - mirrors the same adapter established in js/reports.js. */
+  const asTagEntries = (factorEntryList) => factorEntryList.map((fe) => ({ timestamp: fe.timestamp, tags: [fe.name] }));
+
+  /** "#rrggbb" -> "rgba(r, g, b, alpha)", for translucent span fills. */
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  /**
+   * Draws line/span factor markers on top of whichever chart opts in via
+   * `options.plugins.factorMarkers` - registered once, globally, so it's
+   * completely inert on every other chart in the app (they never set that
+   * option). Positions are bucket indices, converted to pixels via the
+   * chart's own category x-scale - the same indices the bar/line datasets
+   * are already keyed by.
+   */
+  const FACTOR_MARKERS_PLUGIN = {
+    id: "factorMarkers",
+    afterDraw(chart) {
+      const cfg = chart.options.plugins && chart.options.plugins.factorMarkers;
+      if (!cfg || (!cfg.lines.length && !cfg.spans.length)) return;
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea || !scales.x) return;
+
+      const bucketWidth =
+        chart.data.labels.length > 1 ? scales.x.getPixelForValue(1) - scales.x.getPixelForValue(0) : chartArea.right - chartArea.left;
+
+      ctx.save();
+      cfg.spans.forEach((span) => {
+        const x1 = scales.x.getPixelForValue(span.startIdx) - bucketWidth / 2;
+        const x2 = scales.x.getPixelForValue(span.endIdx) + bucketWidth / 2;
+        ctx.fillStyle = span.color;
+        ctx.fillRect(x1, chartArea.top, x2 - x1, chartArea.bottom - chartArea.top);
+      });
+      cfg.lines.forEach((line) => {
+        const x = scales.x.getPixelForValue(line.idx);
+        ctx.strokeStyle = line.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+      });
+      ctx.restore();
+    },
+  };
+  Chart.register(FACTOR_MARKERS_PLUGIN);
 
   function render() {
     container.innerHTML = `
@@ -449,22 +507,77 @@ const TrendsView = (() => {
     });
   }
 
+  function factorDisplayType(name) {
+    const record = factors.find((f) => f.name === name);
+    return (record && record.displayType) || "bar";
+  }
+
+  /**
+   * For each selected factor whose display type is "line" or "span" (set via
+   * Data tab's Manage Factors list - "bar" is the default and stays in the
+   * Factor Activity chart-card instead), computes what to draw on top of
+   * the Frequency/Severity charts: "line" factors get one vertical marker
+   * per occurrence bucket; "span" factors get a shaded rect per recurring
+   * run of days, via Analysis.computeClusters (reusing the asTagEntries
+   * adapter above) with a 1-day minimum - unlike Reports' Clusters section,
+   * even a single isolated day of e.g. a period is worth shading here, not
+   * filtered out as noise.
+   */
+  function computeFactorMarkers(windowInfo) {
+    if (!windowInfo) return { lines: [], spans: [] };
+    const { granularity, buckets } = windowInfo;
+    const lines = [];
+    const spans = [];
+    let colorIndex = 0;
+
+    selectedFactorNames.forEach((name) => {
+      const displayType = factorDisplayType(name);
+      if (displayType === "bar") return;
+
+      const color = SERIES_COLORS[colorIndex % SERIES_COLORS.length];
+      colorIndex++;
+      const theseEntries = factorEntries.filter((fe) => fe.name === name);
+
+      if (displayType === "line") {
+        theseEntries.forEach((fe) => {
+          const t = new Date(fe.timestamp);
+          const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+          const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
+          if (idx !== -1) lines.push({ idx, color, name });
+        });
+      } else if (displayType === "span") {
+        const clusters = Analysis.computeClusters(asTagEntries(theseEntries), name, { maxGapDays: 1, minClusterDays: 1 });
+        clusters.forEach((c) => {
+          const startKey = granularity === "week" ? Bucketing.bucketKeyWeek(c.startDate) : Bucketing.bucketKeyMonth(c.startDate);
+          const endKey = granularity === "week" ? Bucketing.bucketKeyWeek(c.endDate) : Bucketing.bucketKeyMonth(c.endDate);
+          const startIdx = buckets.findIndex((b) => b.getTime() === startKey.getTime());
+          const endIdx = buckets.findIndex((b) => b.getTime() === endKey.getTime());
+          if (startIdx !== -1 && endIdx !== -1) spans.push({ startIdx, endIdx, color: hexToRgba(color, 0.18), name });
+        });
+      }
+    });
+
+    return { lines, spans };
+  }
+
   /**
    * Renders (or hides) the Factor Activity chart-card: one bar series per
-   * selected factor, counted into the SAME buckets as whatever the
+   * selected bar-type factor, counted into the SAME buckets as whatever the
    * Frequency/Severity charts just rendered, so the two are visually
-   * comparable on the same x-axis. Doesn't filter symptom data at all.
+   * comparable on the same x-axis. Doesn't filter symptom data at all. Line/
+   * span-type factors are drawn on the Frequency/Severity charts themselves
+   * instead (see computeFactorMarkers), not here.
    */
   function renderFactorActivity(windowInfo) {
     const card = container.querySelector("#factor-chart-card");
-    if (selectedFactorNames.size === 0 || !windowInfo) {
+    const names = Array.from(selectedFactorNames).filter((name) => factorDisplayType(name) === "bar");
+    if (names.length === 0 || !windowInfo) {
       card.hidden = true;
       return;
     }
     card.hidden = false;
 
     const { granularity, buckets, labels } = windowInfo;
-    const names = Array.from(selectedFactorNames);
 
     const datasets = names.map((name, i) => {
       const counts = buckets.map(() => 0);
@@ -518,6 +631,13 @@ const TrendsView = (() => {
       selected.length >= 2
         ? renderCompareMode(pool, selected, noteEl, emptyEl)
         : renderSingleMode(pool, selected[0] || null, noteEl, emptyEl);
+
+    const markers = computeFactorMarkers(windowInfo);
+    [freqChart, sevChart].forEach((chart) => {
+      if (!chart) return;
+      chart.options.plugins.factorMarkers = markers;
+      chart.update();
+    });
 
     renderTemperatureChart(windowInfo);
     renderFactorActivity(windowInfo);

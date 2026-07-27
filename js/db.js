@@ -349,6 +349,24 @@ const DB = (() => {
   }
 
   /**
+   * Sets how a factor should render on charts: "bar" (default - a count per
+   * bucket, like Trends' existing Factor Activity chart), "line" (a vertical
+   * marker at each occurrence, e.g. a medication change), or "span" (a
+   * shaded date range across a recurring run of days, e.g. a period). A new
+   * optional field on the existing `factors` record - no schema change.
+   * @param {string} name
+   * @param {"bar"|"line"|"span"} displayType
+   */
+  async function setFactorDisplayType(name, displayType) {
+    const store = await tx("factors", "readwrite");
+    const existing = await promisifyRequest(store.get(name));
+    if (!existing) return null;
+    const updated = { ...existing, displayType };
+    await promisifyRequest(store.put(updated));
+    return updated;
+  }
+
+  /**
    * Logs a single factor occurrence. Unlike `entries`, a factor entry always
    * has exactly one `name` and no severity/tags/conditions - a multi-day
    * period is logged as one entry per day it's active, not a date range.
@@ -566,6 +584,7 @@ const DB = (() => {
     mergeConditionRecord,
     touchFactor,
     getAllFactors,
+    setFactorDisplayType,
     addFactorEntry,
     deleteFactorEntry,
     getAllFactorEntries,
