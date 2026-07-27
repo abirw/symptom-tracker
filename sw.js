@@ -3,12 +3,20 @@
  * IndexedDB — the actual entries/tags/conditions are never part of what this
  * file caches or serves, only the code/assets that make up the app itself.
  *
+ * Network-first, not cache-first: a browser only re-installs a service
+ * worker when THIS FILE'S OWN BYTES change, so a cache-first strategy
+ * silently freezes every cached JS/CSS file at whatever was live the last
+ * time sw.js itself was edited - editing app.js/trends.js/etc. alone never
+ * triggers a re-install, so a stale install would otherwise never notice
+ * dozens of later deploys. Fetching from the network first (falling back to
+ * cache only when offline) means a deploy is visible immediately to anyone
+ * online, while offline use still works from whatever was last cached.
+ *
  * Bump CACHE_NAME whenever a file is *removed* from APP_SHELL (not just
- * edited) — content edits are picked up automatically on the next deploy
- * because `install` re-fetches every URL in the list below, but a stale
- * cached entry for a since-removed URL would otherwise never get evicted.
+ * edited) — a stale cached entry for a since-removed URL would otherwise
+ * never get evicted.
  */
-const CACHE_NAME = "symptom-tracker-v2";
+const CACHE_NAME = "symptom-tracker-v3";
 
 const APP_SHELL = [
   "./",
@@ -56,21 +64,21 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Cache-first: serve from cache when possible (works offline), otherwise
-// fetch from the network and cache that response for next time.
+// Network-first: always try the network so a new deploy is picked up right
+// away, caching the fresh response for next time; fall back to whatever's
+// cached only when the network fetch fails (offline).
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         if (response.ok && response.type === "basic") {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(event.request))
   );
 });
