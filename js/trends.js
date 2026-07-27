@@ -79,8 +79,18 @@ const TrendsView = (() => {
   const FACTOR_MARKERS_PLUGIN = {
     id: "factorMarkers",
     afterDraw(chart) {
+      // Chart.js registers a plugin globally across EVERY chart in the app,
+      // not just the ones that opt in - and its options-resolution proxy
+      // returns a truthy (but empty) object for `plugins.factorMarkers` even
+      // on a chart that never sets it, so `cfg` itself is never a reliable
+      // "did this chart opt in" check. Falling back to `[]` for `lines`/
+      // `spans` individually is what actually makes this a no-op everywhere
+      // else, instead of throwing on every other chart in the app (Reports'
+      // charts included).
       const cfg = chart.options.plugins && chart.options.plugins.factorMarkers;
-      if (!cfg || (!cfg.lines.length && !cfg.spans.length)) return;
+      const lines = (cfg && cfg.lines) || [];
+      const spans = (cfg && cfg.spans) || [];
+      if (!lines.length && !spans.length) return;
       const { ctx, chartArea, scales } = chart;
       if (!chartArea || !scales.x) return;
 
@@ -88,13 +98,13 @@ const TrendsView = (() => {
         chart.data.labels.length > 1 ? scales.x.getPixelForValue(1) - scales.x.getPixelForValue(0) : chartArea.right - chartArea.left;
 
       ctx.save();
-      cfg.spans.forEach((span) => {
+      spans.forEach((span) => {
         const x1 = scales.x.getPixelForValue(span.startIdx) - bucketWidth / 2;
         const x2 = scales.x.getPixelForValue(span.endIdx) + bucketWidth / 2;
         ctx.fillStyle = span.color;
         ctx.fillRect(x1, chartArea.top, x2 - x1, chartArea.bottom - chartArea.top);
       });
-      cfg.lines.forEach((line) => {
+      lines.forEach((line) => {
         const x = scales.x.getPixelForValue(line.idx);
         ctx.strokeStyle = line.color;
         ctx.lineWidth = 2;
