@@ -1,8 +1,9 @@
 /**
  * Timeline view: a GitHub-style contribution heatmap sitting above a
- * reverse-chronological entry list, both driven by the same tag/condition
- * filters. Tapping a heatmap day narrows the list to that date; tapping a
- * list entry opens a bottom-sheet modal for editing or deleting it.
+ * reverse-chronological entry list, both driven by the same tag/condition/
+ * time-of-day/severity filters. Tapping a heatmap day narrows the list to
+ * that date; tapping a list entry opens a bottom-sheet modal for editing or
+ * deleting it.
  *
  * The modal's Tags field is TagPickerField (tag-picker-field.js), shared
  * with the Log screen so the classic-vs-smart toggle behaves identically
@@ -21,6 +22,8 @@ const TimelineView = (() => {
   let triggers = [];
   let filterTag = "";
   let filterCondition = "";
+  let filterTimeOfDay = "";
+  let filterSeverity = "";
   let selectedDay = null; // "YYYY-MM-DD" from tapping a heatmap cell, or null
   let heatmapScrollInitialized = false;
 
@@ -41,6 +44,8 @@ const TimelineView = (() => {
       <div class="filter-bar">
         <select id="filter-tag"></select>
         <select id="filter-condition"></select>
+        <select id="filter-time-of-day"></select>
+        <select id="filter-severity"></select>
       </div>
 
       <div class="heatmap-card">
@@ -155,20 +160,50 @@ const TimelineView = (() => {
         condSelect.appendChild(opt);
       });
     condSelect.value = filterCondition;
+
+    const todSelect = container.querySelector("#filter-time-of-day");
+    todSelect.innerHTML = "";
+    const allTodOpt = document.createElement("option");
+    allTodOpt.value = "";
+    allTodOpt.textContent = "All times of day";
+    todSelect.appendChild(allTodOpt);
+    LogView.TIME_OF_DAY_OPTIONS.forEach((o) => {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      todSelect.appendChild(opt);
+    });
+    todSelect.value = filterTimeOfDay;
+
+    const sevSelect = container.querySelector("#filter-severity");
+    sevSelect.innerHTML = "";
+    const allSevOpt = document.createElement("option");
+    allSevOpt.value = "";
+    allSevOpt.textContent = "All severities";
+    sevSelect.appendChild(allSevOpt);
+    for (let i = 1; i <= 5; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = `Severity ${i}`;
+      sevSelect.appendChild(opt);
+    }
+    sevSelect.value = filterSeverity;
   }
 
-  // --- Shared tag/condition filtering (heatmap + list both respect these) ---
+  // --- Shared filtering (heatmap + list both respect these) ---
 
-  /** Entries matching the tag/condition filters only — the heatmap always shows this set. */
-  function getTagConditionFiltered() {
+  /** Entries matching the filter bar (tag/condition/time-of-day/severity) - the heatmap always shows this set. */
+  function getFilterBarEntries() {
     return entries
       .filter((e) => !filterTag || e.tags.includes(filterTag))
-      .filter((e) => !filterCondition || (e.conditions || []).includes(filterCondition));
+      .filter((e) => !filterCondition || (e.conditions || []).includes(filterCondition))
+      .filter((e) => !filterTimeOfDay || e.timeOfDay === filterTimeOfDay)
+      .filter((e) => !filterSeverity || String(e.severity) === filterSeverity);
   }
 
   /** Same as above, plus the heatmap day filter if one's selected — this is what the list shows. */
   function getFilteredEntries() {
-    let list = getTagConditionFiltered();
+    let list = getFilterBarEntries();
     if (selectedDay) {
       list = list.filter((e) => dateKey(new Date(e.timestamp)) === selectedDay);
     }
@@ -233,7 +268,7 @@ const TimelineView = (() => {
   /** Per-day entry count + severities (whichever the current color mode needs), keyed by dateKey. */
   function computeHeatmapDayStats() {
     const stats = new Map();
-    getTagConditionFiltered().forEach((e) => {
+    getFilterBarEntries().forEach((e) => {
       const key = dateKey(new Date(e.timestamp));
       if (!stats.has(key)) stats.set(key, { count: 0, severities: [] });
       const day = stats.get(key);
@@ -724,6 +759,16 @@ const TimelineView = (() => {
     });
     container.querySelector("#filter-condition").addEventListener("change", (e) => {
       filterCondition = e.target.value;
+      renderHeatmap();
+      renderList();
+    });
+    container.querySelector("#filter-time-of-day").addEventListener("change", (e) => {
+      filterTimeOfDay = e.target.value;
+      renderHeatmap();
+      renderList();
+    });
+    container.querySelector("#filter-severity").addEventListener("change", (e) => {
+      filterSeverity = e.target.value;
       renderHeatmap();
       renderList();
     });

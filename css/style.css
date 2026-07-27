@@ -425,13 +425,14 @@ textarea {
 
 .filter-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
 }
 
 .filter-bar select {
   flex: 1;
-  min-width: 0;
+  min-width: 8rem;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   color: var(--text);
