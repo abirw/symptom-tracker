@@ -515,10 +515,15 @@ const DB = (() => {
    * Unlike bulkImportTemperatures's single "Heatwave" case, an import here
    * can span several distinct factor names at once, so firstUsed is upserted
    * per name using the earliest timestamp for that name within this batch.
-   * @param {{name: string, timestamp: string}[]} entries - already deduped
-   *   against existing factorEntries by the caller (same day+name = skip)
+   * @param {{name: string, timestamp: string}[]} entries - in Append mode
+   *   (clearExisting: false), already deduped against existing factorEntries
+   *   by the caller (same day+name = skip)
+   * @param {object} [opts]
+   * @param {boolean} [opts.clearExisting] - true for "Replace All": clears
+   *   every existing factorEntries record first (never `factors` - the
+   *   lookup list of names is never cleared, same as tags/conditions)
    */
-  async function bulkImportFactorEntries(entries) {
+  async function bulkImportFactorEntries(entries, { clearExisting = false } = {}) {
     const db = await open();
     const transaction = db.transaction(["factors", "factorEntries"], "readwrite");
     const factorStore = transaction.objectStore("factors");
@@ -531,6 +536,10 @@ const DB = (() => {
     }
     for (const [name, earliest] of earliestByName) {
       await upsertEarliest(factorStore, name, "firstUsed", earliest, {});
+    }
+
+    if (clearExisting) {
+      await promisifyRequest(factorEntryStore.clear());
     }
 
     for (const e of entries) {

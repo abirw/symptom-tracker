@@ -25,6 +25,7 @@ const DataView = (() => {
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
   let pendingTemperatureImport = null; // { readings, skippedCount } awaiting confirmation
   let pendingFactorLogImport = null; // { entries, skippedCount } awaiting confirmation
+  let factorLogImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
 
   // ---- Export ----
 
@@ -144,7 +145,9 @@ const DataView = (() => {
   // ---- Import: structured (JSON backup or CSV) ----
 
   function syncStructuredImportModeChips() {
-    container.querySelectorAll(".import-mode-row .chip").forEach((chip) => {
+    // Scoped to #import-structured-preview specifically - the factor log
+    // import section below has its own, separately-scoped mode row.
+    container.querySelectorAll("#import-structured-preview .import-mode-row .chip").forEach((chip) => {
       chip.setAttribute("aria-pressed", chip.dataset.importMode === structuredImportMode ? "true" : "false");
     });
   }
@@ -685,16 +688,34 @@ const DataView = (() => {
 
   // ---- Import: factor log ----
 
-  /** Rebuilds the parsed-file summary line for the factor log preview. */
-  function renderFactorLogSummary() {
+  function syncFactorLogImportModeChips() {
+    container.querySelectorAll(".factorlog-import-mode-row .chip").forEach((chip) => {
+      chip.setAttribute("aria-pressed", chip.dataset.importMode === factorLogImportMode ? "true" : "false");
+    });
+  }
+
+  /** Rebuilds the parsed-file summary line for the factor log preview - depends on both the parsed file and the append/replace choice. */
+  async function renderFactorLogSummary() {
     if (!pendingFactorLogImport) return;
     const { entries, skippedCount } = pendingFactorLogImport;
     const factorCount = new Set(entries.map((e) => e.name)).size;
 
-    let summary = `${entries.length} ${entries.length === 1 ? "entry" : "entries"} found across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}`;
-    if (skippedCount > 0) summary += ` (${skippedCount} ${skippedCount === 1 ? "line" : "lines"} skipped)`;
-    summary += ".";
-    container.querySelector("#import-factorlog-summary").textContent = summary;
+    let found = `Found ${entries.length} ${entries.length === 1 ? "entry" : "entries"} across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}`;
+    if (skippedCount > 0) found += ` (${skippedCount} ${skippedCount === 1 ? "line" : "lines"} skipped)`;
+    found += ".";
+
+    let action;
+    if (factorLogImportMode === "replace") {
+      const currentCount = (await DB.getAllFactorEntries()).length;
+      action =
+        currentCount > 0
+          ? `This will permanently delete all ${currentCount} existing factor ${currentCount === 1 ? "entry" : "entries"} and replace them with the file's data.`
+          : `This will import the file's factor entries (nothing existing to replace yet).`;
+    } else {
+      action = "This adds to what's already logged - matching day+factor pairs already logged are skipped, not duplicated.";
+    }
+
+    container.querySelector("#import-factorlog-summary").textContent = `${found} ${action}`;
   }
 
   async function handleFactorLogFile(file) {
@@ -702,6 +723,8 @@ const DataView = (() => {
     const previewEl = container.querySelector("#import-factorlog-preview");
     previewEl.hidden = true;
     pendingFactorLogImport = null;
+    factorLogImportMode = "append";
+    syncFactorLogImportModeChips();
     statusEl.textContent = "Reading file…";
 
     try {
@@ -717,7 +740,7 @@ const DataView = (() => {
 
       pendingFactorLogImport = { entries, skippedCount };
       statusEl.textContent = "";
-      renderFactorLogSummary();
+      await renderFactorLogSummary();
       previewEl.hidden = false;
     } catch (err) {
       console.error(err);
@@ -725,32 +748,44 @@ const DataView = (() => {
     }
   }
 
-  /** Runs the actual import - no confirm() dialog, same reasoning as the other imports (purely additive, nothing to warn about). */
+  /** Runs the actual import - no confirm() dialog, same reasoning as the other imports (destructive consequences are stated up front in the summary text instead). */
   async function confirmFactorLogImport() {
     if (!pendingFactorLogImport) return;
     const btn = container.querySelector("#import-factorlog-confirm-btn");
     const statusEl = container.querySelector("#import-factorlog-status");
     const { entries } = pendingFactorLogImport;
+    const isReplace = factorLogImportMode === "replace";
 
     btn.disabled = true;
     btn.textContent = "Importing…";
 
     try {
-      const existingDayNamePairs = new Set(
-        (await DB.getAllFactorEntries()).map((e) => `${Analysis.dayKey(e.timestamp)}|${e.name}`)
-      );
-      const newEntries = entries
-        .filter((e) => !existingDayNamePairs.has(`${e.date}|${e.name}`))
-        .map((e) => ({ name: e.name, timestamp: new Date(`${e.date}T12:00:00`).toISOString() }));
+      let newEntries;
+      if (isReplace) {
+        // Replace All: every parsed entry is imported as-is, no dedup needed
+        // since the existing factorEntries store is about to be cleared anyway.
+        newEntries = entries.map((e) => ({ name: e.name, timestamp: new Date(`${e.date}T12:00:00`).toISOString() }));
+      } else {
+        const existingDayNamePairs = new Set(
+          (await DB.getAllFactorEntries()).map((e) => `${Analysis.dayKey(e.timestamp)}|${e.name}`)
+        );
+        newEntries = entries
+          .filter((e) => !existingDayNamePairs.has(`${e.date}|${e.name}`))
+          .map((e) => ({ name: e.name, timestamp: new Date(`${e.date}T12:00:00`).toISOString() }));
+      }
 
-      await DB.bulkImportFactorEntries(newEntries);
+      await DB.bulkImportFactorEntries(newEntries, { clearExisting: isReplace });
 
-      const skippedAsDuplicate = entries.length - newEntries.length;
       const factorCount = new Set(newEntries.map((e) => e.name)).size;
-      statusEl.textContent =
-        skippedAsDuplicate > 0
-          ? `Imported ${newEntries.length} new factor entries across ${factorCount} ${factorCount === 1 ? "factor" : "factors"} (${skippedAsDuplicate} already logged, skipped).`
-          : `Imported ${newEntries.length} new factor entries across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}.`;
+      if (isReplace) {
+        statusEl.textContent = `Replaced all factor entries with ${newEntries.length} across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}.`;
+      } else {
+        const skippedAsDuplicate = entries.length - newEntries.length;
+        statusEl.textContent =
+          skippedAsDuplicate > 0
+            ? `Imported ${newEntries.length} new factor entries across ${factorCount} ${factorCount === 1 ? "factor" : "factors"} (${skippedAsDuplicate} already logged, skipped).`
+            : `Imported ${newEntries.length} new factor entries across ${factorCount} ${factorCount === 1 ? "factor" : "factors"}.`;
+      }
       container.querySelector("#import-factorlog-preview").hidden = true;
       container.querySelector("#import-factorlog-file").value = "";
       pendingFactorLogImport = null;
@@ -977,6 +1012,10 @@ const DataView = (() => {
         <input type="file" id="import-factorlog-file" accept=".txt,text/plain" />
         <p id="import-factorlog-status" class="import-status"></p>
         <div id="import-factorlog-preview" class="import-preview" hidden>
+          <div class="factorlog-import-mode-row import-mode-row chip-row">
+            <button type="button" class="chip" data-import-mode="append" aria-pressed="true">Append</button>
+            <button type="button" class="chip" data-import-mode="replace" aria-pressed="false">Replace All</button>
+          </div>
           <p id="import-factorlog-summary"></p>
           <button type="button" id="import-factorlog-confirm-btn" class="primary-btn">Import</button>
         </div>
@@ -1000,7 +1039,7 @@ const DataView = (() => {
       if (file) handleStructuredFile(file);
     });
     container.querySelector("#import-structured-confirm-btn").addEventListener("click", confirmStructuredImport);
-    container.querySelectorAll(".import-mode-row .chip").forEach((chip) => {
+    container.querySelectorAll("#import-structured-preview .import-mode-row .chip").forEach((chip) => {
       chip.addEventListener("click", async () => {
         structuredImportMode = chip.dataset.importMode;
         syncStructuredImportModeChips();
@@ -1026,6 +1065,13 @@ const DataView = (() => {
       if (file) handleFactorLogFile(file);
     });
     container.querySelector("#import-factorlog-confirm-btn").addEventListener("click", confirmFactorLogImport);
+    container.querySelectorAll(".factorlog-import-mode-row .chip").forEach((chip) => {
+      chip.addEventListener("click", async () => {
+        factorLogImportMode = chip.dataset.importMode;
+        syncFactorLogImportModeChips();
+        await renderFactorLogSummary();
+      });
+    });
 
     await loadExportSummary();
     await loadPickerData();
