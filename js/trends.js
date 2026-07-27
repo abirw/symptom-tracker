@@ -13,21 +13,27 @@
  * newly-tracked one never implies the newer one appeared out of nowhere.
  *
  * A separate "Factors" filter (period, heatwaves, medication changes, etc.)
- * doesn't filter the symptom data at all - selecting one just adds a "Factor
- * Activity" chart-card sharing the exact same bucket window as whatever's
- * already plotted, so the two can be visually compared side by side.
+ * doesn't filter the symptom data at all - every selected factor is drawn
+ * directly on the Frequency chart instead, using its own display type (Data
+ * tab's "Manage Factors" list, default "bar"): "bar" factors become an
+ * additional bar series on a secondary (right-hand) y-axis, sharing the
+ * exact same bucket window as the symptom data so the two are directly
+ * comparable; "line" factors (e.g. a medication change) and "span" factors
+ * (e.g. a period) are instead drawn as an overlay - on BOTH the Frequency
+ * and Severity charts - via a small custom Chart.js plugin, registered once
+ * below. Colors for all three factor types are assigned from one shared
+ * sequence (computeFactorColors) so a given factor looks the same regardless
+ * of which of the three treatments it uses.
  *
  * Imported temperature readings (Data tab's "Import Temperature Data") get
- * the same treatment: an always-on "Temperature" chart-card (bucket-averaged,
+ * similar treatment: an always-on "Temperature" chart-card (bucket-averaged,
  * not summed) that only appears when at least one reading falls in the
  * current window - no filter toggle needed since there's just one series.
  *
- * Each factor has a display type (Data tab's "Manage Factors" list, default
- * "bar"): "bar" factors stay in the Factor Activity chart-card above; "line"
- * factors (e.g. a medication change) and "span" factors (e.g. a period) are
- * instead drawn directly on top of the Frequency/Severity charts via a small
- * custom Chart.js plugin, registered once below - that's where "did this
- * correlate with what I was already looking at" is actually answerable.
+ * Chart Detail (Day/Week/Month) is a manual toggle, not auto-chosen - unlike
+ * Reports' charts, which still auto-pick week-vs-month via
+ * Bucketing.chooseGranularity based on the date range. "Day" only exists as
+ * an option here; Bucketing.chooseGranularity deliberately never returns it.
  *
  * Frequency/severity counting is weighted by entry.occurrenceCount (via
  * Analysis.occurrenceCount) - an entry logged as 2 occurrences counts twice
@@ -45,9 +51,9 @@ const TrendsView = (() => {
   let selectedConditionNames = new Set();
   let selectedFactorNames = new Set();
   let selectedRange = "90";
+  let selectedGranularity = "week";
   let freqChart = null;
   let sevChart = null;
-  let factorChart = null;
   let temperatureChart = null;
 
   const RANGE_OPTIONS = [
@@ -141,6 +147,14 @@ const TrendsView = (() => {
           ${RANGE_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
         </select>
       </div>
+      <div class="field">
+        <label>Chart Detail</label>
+        <div class="granularity-row chip-row">
+          <button type="button" class="chip" data-granularity="day">Day</button>
+          <button type="button" class="chip" data-granularity="week">Week</button>
+          <button type="button" class="chip" data-granularity="month">Month</button>
+        </div>
+      </div>
       <div id="trends-tracking-note" class="tracking-note" hidden></div>
       <p id="trends-empty" class="placeholder" hidden></p>
       <div class="chart-card">
@@ -155,11 +169,14 @@ const TrendsView = (() => {
         <h3>Temperature</h3>
         <div class="chart-wrap"><canvas id="temperature-chart"></canvas></div>
       </div>
-      <div class="chart-card" id="factor-chart-card" hidden>
-        <h3>Factor Activity</h3>
-        <div class="chart-wrap"><canvas id="factor-chart"></canvas></div>
-      </div>
     `;
+  }
+
+  /** Keeps the Day/Week/Month chips in sync with selectedGranularity. */
+  function syncGranularityChips() {
+    container.querySelectorAll(".granularity-row .chip").forEach((chip) => {
+      chip.setAttribute("aria-pressed", chip.dataset.granularity === selectedGranularity ? "true" : "false");
+    });
   }
 
   /** Renders the tag/condition/factor filter chips, dropping any prior selection that no longer exists. */
@@ -266,10 +283,6 @@ const TrendsView = (() => {
       sevChart.destroy();
       sevChart = null;
     }
-    if (factorChart) {
-      factorChart.destroy();
-      factorChart = null;
-    }
     if (temperatureChart) {
       temperatureChart.destroy();
       temperatureChart = null;
@@ -319,7 +332,7 @@ const TrendsView = (() => {
     emptyEl.hidden = filtered.length !== 0;
     if (filtered.length === 0) emptyEl.textContent = "No entries in this range.";
 
-    const granularity = Bucketing.chooseGranularity(start, end);
+    const granularity = selectedGranularity;
     const buckets = Bucketing.buildBuckets(start, end, granularity);
     const labels = buckets.map((b) => Bucketing.formatBucketLabel(b, granularity));
 
@@ -329,7 +342,7 @@ const TrendsView = (() => {
 
     filtered.forEach((e) => {
       const t = new Date(e.timestamp);
-      const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+      const key = Bucketing.bucketKey(t, granularity);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx === -1) return;
       const occ = Analysis.occurrenceCount(e);
@@ -399,7 +412,7 @@ const TrendsView = (() => {
       noteEl.appendChild(span);
     });
 
-    const granularity = Bucketing.chooseGranularity(sharedStart, now);
+    const granularity = selectedGranularity;
     const buckets = Bucketing.buildBuckets(sharedStart, now, granularity);
     const labels = buckets.map((b) => Bucketing.formatBucketLabel(b, granularity));
 
@@ -417,7 +430,7 @@ const TrendsView = (() => {
       const sevCounts = buckets.map(() => 0);
       filtered.forEach((e) => {
         const t = new Date(e.timestamp);
-        const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+        const key = Bucketing.bucketKey(t, granularity);
         const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
         if (idx === -1) return;
         const occ = Analysis.occurrenceCount(e);
@@ -435,7 +448,7 @@ const TrendsView = (() => {
       // so comparing it directly against each bucket's start would wrongly
       // null out the whole bucket it actually starts in, discarding real
       // entries logged later that same week/month.
-      const wStartKey = granularity === "week" ? Bucketing.bucketKeyWeek(w.start) : Bucketing.bucketKeyMonth(w.start);
+      const wStartKey = Bucketing.bucketKey(w.start, granularity);
       const freqData = buckets.map((b, idx) => (b.getTime() < wStartKey.getTime() ? null : counts[idx]));
       const sevData = buckets.map((b, idx) => {
         if (b.getTime() < wStartKey.getTime()) return null;
@@ -488,7 +501,7 @@ const TrendsView = (() => {
 
     temperatures.forEach((t) => {
       const date = new Date(`${t.date}T12:00:00`); // noon-anchored: a date-only value, no real time-of-day
-      const key = granularity === "week" ? Bucketing.bucketKeyWeek(date) : Bucketing.bucketKeyMonth(date);
+      const key = Bucketing.bucketKey(date, granularity);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx === -1) return;
       sums[idx] += t.value;
@@ -529,9 +542,24 @@ const TrendsView = (() => {
   }
 
   /**
+   * Assigns one stable color per selected factor, in selection order, offset
+   * past however many symptom series are already using the front of
+   * SERIES_COLORS (1 in single mode, N in compare mode) - so a factor never
+   * visually collides with a symptom's own bar/line, and looks the same
+   * color whether it ends up as a bar dataset, a line marker, or a span fill.
+   */
+  function computeFactorColors(symptomSeriesCount) {
+    const map = new Map();
+    Array.from(selectedFactorNames).forEach((name, i) => {
+      map.set(name, SERIES_COLORS[(symptomSeriesCount + i) % SERIES_COLORS.length]);
+    });
+    return map;
+  }
+
+  /**
    * For each selected factor whose display type is "line" or "span" (set via
-   * Data tab's Manage Factors list - "bar" is the default and stays in the
-   * Factor Activity chart-card instead), computes what to draw on top of
+   * Data tab's Manage Factors list - "bar" is handled separately by
+   * computeBarFactorDatasets), computes what to draw as an overlay on top of
    * the Frequency/Severity charts: "line" factors get one vertical marker
    * per occurrence bucket; "span" factors get a shaded rect per recurring
    * run of days, via Analysis.computeClusters (reusing the asTagEntries
@@ -539,33 +567,31 @@ const TrendsView = (() => {
    * even a single isolated day of e.g. a period is worth shading here, not
    * filtered out as noise.
    */
-  function computeFactorMarkers(windowInfo) {
+  function computeFactorMarkers(windowInfo, colorMap) {
     if (!windowInfo) return { lines: [], spans: [] };
     const { granularity, buckets } = windowInfo;
     const lines = [];
     const spans = [];
-    let colorIndex = 0;
 
     selectedFactorNames.forEach((name) => {
       const displayType = factorDisplayType(name);
       if (displayType === "bar") return;
 
-      const color = SERIES_COLORS[colorIndex % SERIES_COLORS.length];
-      colorIndex++;
+      const color = colorMap.get(name);
       const theseEntries = factorEntries.filter((fe) => fe.name === name);
 
       if (displayType === "line") {
         theseEntries.forEach((fe) => {
           const t = new Date(fe.timestamp);
-          const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+          const key = Bucketing.bucketKey(t, granularity);
           const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
           if (idx !== -1) lines.push({ idx, color, name });
         });
       } else if (displayType === "span") {
         const clusters = Analysis.computeClusters(asTagEntries(theseEntries), name, { maxGapDays: 1, minClusterDays: 1 });
         clusters.forEach((c) => {
-          const startKey = granularity === "week" ? Bucketing.bucketKeyWeek(c.startDate) : Bucketing.bucketKeyMonth(c.startDate);
-          const endKey = granularity === "week" ? Bucketing.bucketKeyWeek(c.endDate) : Bucketing.bucketKeyMonth(c.endDate);
+          const startKey = Bucketing.bucketKey(c.startDate, granularity);
+          const endKey = Bucketing.bucketKey(c.endDate, granularity);
           const startIdx = buckets.findIndex((b) => b.getTime() === startKey.getTime());
           const endIdx = buckets.findIndex((b) => b.getTime() === endKey.getTime());
           if (startIdx !== -1 && endIdx !== -1) spans.push({ startIdx, endIdx, color: hexToRgba(color, 0.18), name });
@@ -577,43 +603,31 @@ const TrendsView = (() => {
   }
 
   /**
-   * Renders (or hides) the Factor Activity chart-card: one bar series per
-   * selected bar-type factor, counted into the SAME buckets as whatever the
-   * Frequency/Severity charts just rendered, so the two are visually
-   * comparable on the same x-axis. Doesn't filter symptom data at all. Line/
-   * span-type factors are drawn on the Frequency/Severity charts themselves
-   * instead (see computeFactorMarkers), not here.
+   * For each selected bar-type factor, one bar dataset counted into the SAME
+   * buckets as the Frequency chart, on its own secondary (right-hand) y-axis
+   * since a factor's raw occurrence count is a different scale than symptom
+   * frequency - meant to be appended directly onto the Frequency chart's own
+   * datasets (see renderCharts), not rendered as a separate chart.
    */
-  function renderFactorActivity(windowInfo) {
-    const card = container.querySelector("#factor-chart-card");
-    const names = Array.from(selectedFactorNames).filter((name) => factorDisplayType(name) === "bar");
-    if (names.length === 0 || !windowInfo) {
-      card.hidden = true;
-      return;
-    }
-    card.hidden = false;
+  function computeBarFactorDatasets(windowInfo, colorMap) {
+    if (!windowInfo) return [];
+    const { granularity, buckets } = windowInfo;
 
-    const { granularity, buckets, labels } = windowInfo;
-
-    const datasets = names.map((name, i) => {
-      const counts = buckets.map(() => 0);
-      factorEntries
-        .filter((f) => f.name === name)
-        .forEach((f) => {
-          const t = new Date(f.timestamp);
-          const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
-          const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
-          if (idx !== -1) counts[idx]++;
-        });
-      const color = SERIES_COLORS[i % SERIES_COLORS.length];
-      return { label: name, data: counts, backgroundColor: color, borderColor: color, borderRadius: 4 };
-    });
-
-    factorChart = new Chart(container.querySelector("#factor-chart").getContext("2d"), {
-      type: "bar",
-      data: { labels, datasets },
-      options: chartOptions({ beginAtZero: true, stepSize: 1 }, names.length > 1),
-    });
+    return Array.from(selectedFactorNames)
+      .filter((name) => factorDisplayType(name) === "bar")
+      .map((name) => {
+        const counts = buckets.map(() => 0);
+        factorEntries
+          .filter((f) => f.name === name)
+          .forEach((f) => {
+            const t = new Date(f.timestamp);
+            const key = Bucketing.bucketKey(t, granularity);
+            const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
+            if (idx !== -1) counts[idx]++;
+          });
+        const color = colorMap.get(name);
+        return { type: "bar", label: name, data: counts, backgroundColor: color, borderColor: color, borderRadius: 4, yAxisID: "y1" };
+      });
   }
 
   /** Recomputes the effective window(s)/buckets and (re)draws both charts from scratch. */
@@ -633,30 +647,50 @@ const TrendsView = (() => {
       freqCard.hidden = true;
       sevCard.hidden = true;
       container.querySelector("#temperature-chart-card").hidden = true;
-      container.querySelector("#factor-chart-card").hidden = true;
       return;
     }
 
     freqCard.hidden = false;
     sevCard.hidden = false;
+    syncGranularityChips();
 
     const pool = conditionFilteredPool();
     const selected = Array.from(selectedTagNames);
+    const symptomSeriesCount = selected.length >= 2 ? selected.length : 1;
 
     const windowInfo =
       selected.length >= 2
         ? renderCompareMode(pool, selected, noteEl, emptyEl)
         : renderSingleMode(pool, selected[0] || null, noteEl, emptyEl);
 
-    const markers = computeFactorMarkers(windowInfo);
-    [freqChart, sevChart].forEach((chart) => {
-      if (!chart) return;
-      chart.options.plugins.factorMarkers = markers;
-      chart.update();
-    });
+    const factorColors = computeFactorColors(symptomSeriesCount);
+    const markers = computeFactorMarkers(windowInfo, factorColors);
+    const barFactorDatasets = computeBarFactorDatasets(windowInfo, factorColors);
+
+    if (freqChart) {
+      freqChart.options.plugins.factorMarkers = markers;
+      freqChart.data.datasets.push(...barFactorDatasets);
+      if (barFactorDatasets.length > 0) {
+        // A bar-type factor's raw occurrence count lives on its own
+        // right-hand axis - a different scale than symptom frequency - and
+        // forces the legend on so the extra series is actually labeled,
+        // even in single-symptom mode where the legend is normally off.
+        freqChart.options.scales.y1 = {
+          position: "right",
+          beginAtZero: true,
+          ticks: { color: "#9fb0ac", stepSize: 1 },
+          grid: { drawOnChartArea: false },
+        };
+        freqChart.options.plugins.legend.display = true;
+      }
+      freqChart.update();
+    }
+    if (sevChart) {
+      sevChart.options.plugins.factorMarkers = markers;
+      sevChart.update();
+    }
 
     renderTemperatureChart(windowInfo);
-    renderFactorActivity(windowInfo);
   }
 
   async function loadData() {
@@ -681,6 +715,15 @@ const TrendsView = (() => {
       selectedRange = e.target.value;
       renderCharts();
     });
+
+    container.querySelectorAll(".granularity-row .chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        selectedGranularity = chip.dataset.granularity;
+        syncGranularityChips();
+        renderCharts();
+      });
+    });
+    syncGranularityChips();
 
     await loadData();
   }

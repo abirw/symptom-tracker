@@ -283,7 +283,7 @@ const ReportsView = (() => {
 
     focusEntries.forEach((e) => {
       const t = new Date(e.timestamp);
-      const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+      const key = Bucketing.bucketKey(t, granularity);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx === -1) return;
       const occ = Analysis.occurrenceCount(e);
@@ -324,7 +324,7 @@ const ReportsView = (() => {
 
     focusFactorEntries.forEach((fe) => {
       const t = new Date(fe.timestamp);
-      const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+      const key = Bucketing.bucketKey(t, granularity);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx !== -1) counts[idx]++;
     });
@@ -567,7 +567,7 @@ const ReportsView = (() => {
     const counts = buckets.map(() => 0);
     matching.forEach((e) => {
       const t = new Date(e.timestamp);
-      const key = granularity === "week" ? Bucketing.bucketKeyWeek(t) : Bucketing.bucketKeyMonth(t);
+      const key = Bucketing.bucketKey(t, granularity);
       const idx = buckets.findIndex((b) => b.getTime() === key.getTime());
       if (idx !== -1) counts[idx]++;
     });
