@@ -89,7 +89,6 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 1rem;
-  padding-bottom: calc(4.5rem + var(--safe-bottom));
 }
 
 .view[hidden] {
@@ -122,10 +121,14 @@ body {
 /* --- Tab bar --- */
 
 .tab-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  /* A normal flex child of <body> (already display:flex; flex-direction:column),
+     not position:fixed - a fixed bar depends on #view-root's bottom padding
+     being a hand-guessed estimate of the bar's own height (it was a magic
+     `calc(4.5rem + var(--safe-bottom))`), and if that guess is ever off,
+     scrolled content and the fixed bar can visually overlap - exactly the
+     kind of thing that produced a mis-tap near the bottom landing on a
+     Timeline entry instead of a tab. Letting the flex layout size
+     #view-root itself removes the guess (and the whole bug class) entirely. */
   display: flex;
   background: rgba(19, 29, 27, 0.82);
   backdrop-filter: blur(16px) saturate(160%);
