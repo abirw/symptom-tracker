@@ -546,7 +546,7 @@ const DB = (() => {
   /**
    * Performs a full structured import (Data tab's "Restore a backup") in a
    * single transaction spanning entries/tags/conditions/factors/
-   * factorEntries/temperatures, instead of the hundreds of separate
+   * factorEntries/temperatures/triggers, instead of the hundreds of separate
    * transactions a naive per-record loop would open - that overhead is what
    * made large imports feel like they'd hung even though they'd eventually
    * finish.
@@ -556,13 +556,17 @@ const DB = (() => {
    * @param {object[]} opts.conditionRecords - explicit condition metadata from the file, if any (may be empty)
    * @param {Map<string,string>} opts.tagFirstUse - tag name -> earliest ISO timestamp, derived from the entries
    * @param {Map<string,string>} opts.conditionFirstUse - condition name -> earliest ISO timestamp, derived from the entries
-   * @param {boolean} opts.clearExistingEntries - true for "Replace All" - also clears factorEntries
-   *   (both are "logged data"), but never tags/conditions/factors (lookup lists) or temperatures
+   * @param {boolean} opts.clearExistingEntries - true for "Replace All" - a genuine full reset:
+   *   clears every store (entries, factorEntries, tags, conditions, factors, temperatures,
+   *   triggers) before anything from the file is inserted, so the app ends up containing
+   *   exactly what's in the file, nothing left over from before.
    * @param {object[]} [opts.factorEntryRecords] - factor entries to upsert (each already has an id, so
    *   re-importing the same backup in Append mode overwrites in place rather than duplicating)
    * @param {object[]} [opts.factorRecords] - explicit factor metadata from the file, if any (may be empty)
    * @param {Map<string,string>} [opts.factorFirstUse] - factor name -> earliest ISO timestamp, derived from factorEntryRecords
    * @param {object[]} [opts.temperatureRecords] - {date, value} readings, always upserted regardless of mode
+   * @param {object[]} [opts.triggerRecords] - explicit trigger metadata from the file, if any (may be empty)
+   * @param {Map<string,string>} [opts.triggerFirstUse] - trigger name -> earliest ISO timestamp, derived from entries' triggerTags
    */
   async function bulkImportEntries({
     entries,
@@ -575,15 +579,36 @@ const DB = (() => {
     factorRecords = [],
     factorFirstUse = new Map(),
     temperatureRecords = [],
+    triggerRecords = [],
+    triggerFirstUse = new Map(),
   }) {
     const db = await open();
-    const transaction = db.transaction(["entries", "tags", "conditions", "factors", "factorEntries", "temperatures"], "readwrite");
+    const transaction = db.transaction(
+      ["entries", "tags", "conditions", "factors", "factorEntries", "temperatures", "triggers"],
+      "readwrite"
+    );
     const entryStore = transaction.objectStore("entries");
     const tagStore = transaction.objectStore("tags");
     const conditionStore = transaction.objectStore("conditions");
     const factorStore = transaction.objectStore("factors");
     const factorEntryStore = transaction.objectStore("factorEntries");
     const temperatureStore = transaction.objectStore("temperatures");
+    const triggerStore = transaction.objectStore("triggers");
+
+    // Replace All is a genuine full reset - every store is wiped before any
+    // of the file's own records are inserted below, so nothing from before
+    // the restore can survive alongside it. This must happen first: clearing
+    // AFTER inserting (the old ordering) would wipe out the very data this
+    // same import just wrote.
+    if (clearExistingEntries) {
+      await promisifyRequest(entryStore.clear());
+      await promisifyRequest(factorEntryStore.clear());
+      await promisifyRequest(tagStore.clear());
+      await promisifyRequest(conditionStore.clear());
+      await promisifyRequest(factorStore.clear());
+      await promisifyRequest(temperatureStore.clear());
+      await promisifyRequest(triggerStore.clear());
+    }
 
     for (const t of tagRecords) {
       await upsertEarliest(tagStore, t.name, "firstUsed", t.firstUsed || new Date().toISOString(), {
@@ -596,10 +621,8 @@ const DB = (() => {
     for (const f of factorRecords) {
       await upsertEarliest(factorStore, f.name, "firstUsed", f.firstUsed || new Date().toISOString(), {});
     }
-
-    if (clearExistingEntries) {
-      await promisifyRequest(entryStore.clear());
-      await promisifyRequest(factorEntryStore.clear());
+    for (const t of triggerRecords) {
+      await upsertEarliest(triggerStore, t.name, "firstUsed", t.firstUsed || new Date().toISOString(), {});
     }
 
     for (const [name, occurredAt] of tagFirstUse) {
@@ -610,6 +633,9 @@ const DB = (() => {
     }
     for (const [name, occurredAt] of factorFirstUse) {
       await upsertEarliest(factorStore, name, "firstUsed", occurredAt, {});
+    }
+    for (const [name, occurredAt] of triggerFirstUse) {
+      await upsertEarliest(triggerStore, name, "firstUsed", occurredAt, {});
     }
 
     for (const e of entries) {

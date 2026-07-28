@@ -20,7 +20,7 @@ const DataView = (() => {
   let allTags = [];
   let allConditions = [];
   let allFactors = []; // for the Manage Factors list (chart display type)
-  let pendingStructuredImport = null; // { entries, tags, conditions, factorEntries, factors, temperatures } awaiting confirmation
+  let pendingStructuredImport = null; // { entries, tags, conditions, factorEntries, factors, temperatures, triggers } awaiting confirmation
   let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
@@ -91,15 +91,16 @@ const DataView = (() => {
   }
 
   async function exportJson() {
-    const [entries, tags, conditions, factorEntries, factors, temperatures] = await Promise.all([
+    const [entries, tags, conditions, factorEntries, factors, temperatures, triggers] = await Promise.all([
       DB.getAllEntries(),
       DB.getAllTags(),
       DB.getAllConditions(),
       DB.getAllFactorEntries(),
       DB.getAllFactors(),
       DB.getAllTemperatures(),
+      DB.getAllTriggers(),
     ]);
-    const payload = { exportedAt: new Date().toISOString(), entries, tags, conditions, factorEntries, factors, temperatures };
+    const payload = { exportedAt: new Date().toISOString(), entries, tags, conditions, factorEntries, factors, temperatures, triggers };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     return shareOrDownload(blob, buildFilename("json"), "application/json");
   }
@@ -158,7 +159,7 @@ const DataView = (() => {
   /** Rebuilds the summary text under the mode chips - depends on both the parsed file and the append/replace choice. */
   async function renderStructuredImportSummary() {
     if (!pendingStructuredImport) return;
-    const { entries, tags, conditions, factorEntries, factors, temperatures } = pendingStructuredImport;
+    const { entries, tags, conditions, factorEntries, factors, temperatures, triggers } = pendingStructuredImport;
 
     const parts = [`${entries.length} ${entries.length === 1 ? "entry" : "entries"}`];
     if (tags.length) parts.push(`${tags.length} ${tags.length === 1 ? "tag" : "tags"}`);
@@ -168,6 +169,7 @@ const DataView = (() => {
       parts.push(`${factorEntries.length} factor entries across ${factorNameCount} ${factorNameCount === 1 ? "factor" : "factors"}`);
     }
     if (temperatures.length) parts.push(`${temperatures.length} temperature readings`);
+    if (triggers.length) parts.push(`${triggers.length} ${triggers.length === 1 ? "trigger" : "triggers"}`);
     let found = `Found ${parts.join(", ")}.`;
     if (tags.length === 0 && conditions.length === 0) {
       found += " No tags/conditions section in this file - tags and their tracking-started dates will be recomputed from the entries themselves.";
@@ -187,7 +189,7 @@ const DataView = (() => {
         if (currentFactorEntryCount > 0) {
           deletedParts.push(`${currentFactorEntryCount} factor ${currentFactorEntryCount === 1 ? "entry" : "entries"}`);
         }
-        action = `This will permanently delete all ${deletedParts.join(" and ")} and replace them with the file's data.`;
+        action = `This will permanently delete all ${deletedParts.join(" and ")} - AND every existing tag, condition, factor, trigger, and temperature reading, even ones not in this file - replacing everything with just what's in this file.`;
       } else {
         action = `This will import the ${entries.length} entries from this file (nothing existing to replace yet).`;
       }
@@ -210,9 +212,9 @@ const DataView = (() => {
 
     try {
       const text = await file.text();
-      let entries, tags, conditions, factorEntries, factors, temperatures;
+      let entries, tags, conditions, factorEntries, factors, temperatures, triggers;
       if (file.name.toLowerCase().endsWith(".json")) {
-        ({ entries, tags, conditions, factorEntries, factors, temperatures } = Importer.parseJsonBackup(text));
+        ({ entries, tags, conditions, factorEntries, factors, temperatures, triggers } = Importer.parseJsonBackup(text));
       } else {
         entries = Importer.csvToEntries(text);
         tags = [];
@@ -220,9 +222,10 @@ const DataView = (() => {
         factorEntries = [];
         factors = [];
         temperatures = [];
+        triggers = [];
       }
 
-      pendingStructuredImport = { entries, tags, conditions, factorEntries, factors, temperatures };
+      pendingStructuredImport = { entries, tags, conditions, factorEntries, factors, temperatures, triggers };
       statusEl.textContent = "";
       await renderStructuredImportSummary();
       previewEl.hidden = false;
@@ -281,7 +284,7 @@ const DataView = (() => {
     if (!pendingStructuredImport) return;
     const btn = container.querySelector("#import-structured-confirm-btn");
     const statusEl = container.querySelector("#import-structured-status");
-    const { entries, tags, conditions, factorEntries, factors, temperatures } = pendingStructuredImport;
+    const { entries, tags, conditions, factorEntries, factors, temperatures, triggers } = pendingStructuredImport;
     const isReplace = structuredImportMode === "replace";
 
     btn.disabled = true;
@@ -301,6 +304,8 @@ const DataView = (() => {
         factorRecords: factors,
         factorFirstUse: computeEarliestByFactorName(factorEntries),
         temperatureRecords: temperatures,
+        triggerRecords: triggers,
+        triggerFirstUse: computeEarliestByName(entries, "triggerTags"),
       });
 
       let statusText = `${isReplace ? "Replaced all entries with" : "Imported"} ${entries.length} ${
@@ -1151,7 +1156,7 @@ const DataView = (() => {
       </div>
       <p id="export-status" class="confirmation" hidden></p>
       <p class="export-note">
-        JSON keeps full fidelity (entries, tags, conditions, factors, temperature data) for backup.
+        JSON keeps full fidelity (entries, tags, conditions, factors, triggers, temperature data) for backup.
         CSV is for opening in a spreadsheet (symptom entries only). Nothing leaves this device
         except through this deliberate export action.
       </p>

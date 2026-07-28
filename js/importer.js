@@ -30,7 +30,7 @@ const Importer = (() => {
 
   /**
    * @param {string} text - raw file contents
-   * @returns {{entries: object[], tags: object[], conditions: object[], factorEntries: object[], factors: object[], temperatures: object[]}}
+   * @returns {{entries: object[], tags: object[], conditions: object[], factorEntries: object[], factors: object[], temperatures: object[], triggers: object[]}}
    * @throws if the JSON doesn't look like one of this app's own exports
    */
   function parseJsonBackup(text) {
@@ -44,11 +44,12 @@ const Importer = (() => {
       entries: data.entries.map(normalizeEntryConditions),
       tags: Array.isArray(data.tags) ? data.tags : [],
       conditions: Array.isArray(data.conditions) ? data.conditions : [],
-      // All three are newer than the original export format - default to
-      // empty so a backup made before Factors/Temperature existed still imports.
+      // All four are newer than the original export format - default to
+      // empty so a backup made before Factors/Temperature/Triggers existed still imports.
       factorEntries: Array.isArray(data.factorEntries) ? data.factorEntries : [],
       factors: Array.isArray(data.factors) ? data.factors : [],
       temperatures: Array.isArray(data.temperatures) ? data.temperatures : [],
+      triggers: Array.isArray(data.triggers) ? data.triggers : [],
     };
   }
 
