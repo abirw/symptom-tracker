@@ -882,6 +882,12 @@ textarea {
   font-family: inherit;
 }
 
+.tag-manage-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+}
+
 .tag-manage-edit-input-row {
   display: flex;
   gap: 0.4rem;

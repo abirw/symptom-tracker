@@ -366,6 +366,71 @@ const DB = (() => {
     return existing;
   }
 
+  /**
+   * Renames a condition and rewrites every entry that references it, in a
+   * single atomic transaction spanning both the `conditions` and `entries`
+   * stores - verbatim mirror of renameTag, adjusted for the `conditions`
+   * field/index instead of `tags`.
+   * @param {string} oldName
+   * @param {string} newName
+   * @returns {Promise<object>} the renamed condition record
+   * @throws if `oldName` doesn't exist, or `newName` is blank/already taken
+   */
+  async function renameCondition(oldName, newName) {
+    const trimmedNew = (newName || "").trim();
+    if (!trimmedNew) throw new Error("New condition name can't be blank.");
+    if (trimmedNew === oldName) return getAllConditions().then((conditions) => conditions.find((c) => c.name === oldName));
+
+    const db = await open();
+    const transaction = db.transaction(["conditions", "entries"], "readwrite");
+    const conditionStore = transaction.objectStore("conditions");
+    const entryStore = transaction.objectStore("entries");
+
+    const existingOld = await promisifyRequest(conditionStore.get(oldName));
+    if (!existingOld) throw new Error(`Condition "${oldName}" not found.`);
+
+    const existingNew = await promisifyRequest(conditionStore.get(trimmedNew));
+    if (existingNew) throw new Error(`"${trimmedNew}" is already a condition.`);
+
+    const renamed = { ...existingOld, name: trimmedNew };
+    await promisifyRequest(conditionStore.add(renamed));
+    await promisifyRequest(conditionStore.delete(oldName));
+
+    const affectedEntries = await promisifyRequest(entryStore.index("conditions").getAll(oldName));
+    for (const entry of affectedEntries) {
+      const updated = { ...entry, conditions: entry.conditions.map((c) => (c === oldName ? trimmedNew : c)) };
+      await promisifyRequest(entryStore.put(updated));
+    }
+
+    return renamed;
+  }
+
+  /**
+   * Deletes a condition from the lookup list and strips it from every entry
+   * that referenced it (rather than leaving entries pointing at a name that
+   * no longer exists anywhere) - same atomic two-store transaction shape as
+   * renameCondition, but removing instead of replacing.
+   * @param {string} name
+   * @throws if `name` doesn't exist
+   */
+  async function deleteCondition(name) {
+    const db = await open();
+    const transaction = db.transaction(["conditions", "entries"], "readwrite");
+    const conditionStore = transaction.objectStore("conditions");
+    const entryStore = transaction.objectStore("entries");
+
+    const existing = await promisifyRequest(conditionStore.get(name));
+    if (!existing) throw new Error(`Condition "${name}" not found.`);
+
+    await promisifyRequest(conditionStore.delete(name));
+
+    const affectedEntries = await promisifyRequest(entryStore.index("conditions").getAll(name));
+    for (const entry of affectedEntries) {
+      const updated = { ...entry, conditions: entry.conditions.filter((c) => c !== name) };
+      await promisifyRequest(entryStore.put(updated));
+    }
+  }
+
   // --- Factors (a separate, simpler log for non-symptom things like period/heat/medication changes) ---
 
   /** Same idempotent create-if-missing pattern as touchTag/touchCondition, for the factor lookup list. */
@@ -657,6 +722,8 @@ const DB = (() => {
     touchCondition,
     getAllConditions,
     mergeConditionRecord,
+    renameCondition,
+    deleteCondition,
     touchFactor,
     getAllFactors,
     setFactorDisplayType,

@@ -24,6 +24,8 @@ const DataView = (() => {
   let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
+  let conditionUsageCounts = {}; // condition name -> entry count, for the Manage Conditions list
+  let armedConditionDeleteName = null; // two-tap delete: first tap arms this condition's row, a second tap deletes
   let pendingTemperatureImport = null; // { readings, skippedCount } awaiting confirmation
   let pendingFactorLogImport = null; // { entries, skippedCount } awaiting confirmation
   let factorLogImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
@@ -919,6 +921,158 @@ const DataView = (() => {
     });
   }
 
+  // ---- Manage Conditions ----
+
+  async function loadConditionUsage() {
+    const entries = await DB.getAllEntries();
+    const counts = {};
+    entries.forEach((e) => (e.conditions || []).forEach((name) => {
+      counts[name] = (counts[name] || 0) + 1;
+    }));
+    conditionUsageCounts = counts;
+  }
+
+  function renderConditionManageList() {
+    const wrap = container.querySelector("#condition-manage-list");
+    wrap.innerHTML = "";
+
+    if (allConditions.length === 0) {
+      const p = document.createElement("p");
+      p.className = "placeholder";
+      p.textContent = "No conditions yet.";
+      wrap.appendChild(p);
+      return;
+    }
+
+    allConditions
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((condition) => wrap.appendChild(buildConditionManageRow(condition)));
+  }
+
+  function buildConditionManageRow(condition) {
+    const row = document.createElement("div");
+    row.className = "tag-manage-row";
+
+    const info = document.createElement("div");
+    info.className = "tag-manage-info";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "tag-manage-name";
+    nameEl.textContent = condition.name;
+    info.appendChild(nameEl);
+
+    const count = conditionUsageCounts[condition.name] || 0;
+    const meta = document.createElement("span");
+    meta.className = "tag-manage-meta";
+    meta.textContent = `${count} ${count === 1 ? "entry" : "entries"}`;
+    info.appendChild(meta);
+
+    row.appendChild(info);
+
+    const actions = document.createElement("div");
+    actions.className = "tag-manage-actions";
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "tag-manage-rename-btn";
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", () => startConditionRename(row, condition));
+    actions.appendChild(renameBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "tag-manage-rename-btn modal-delete";
+    deleteBtn.textContent = armedConditionDeleteName === condition.name ? "Confirm?" : "Delete";
+    deleteBtn.addEventListener("click", () => handleDeleteCondition(condition.name));
+    actions.appendChild(deleteBtn);
+
+    row.appendChild(actions);
+
+    return row;
+  }
+
+  /** Swaps a condition row into an inline rename form; Enter/Save commits, Escape/Cancel reverts. Verbatim mirror of startTagRename. */
+  function startConditionRename(row, condition) {
+    row.innerHTML = "";
+    row.classList.add("tag-manage-row-editing");
+
+    const inputRow = document.createElement("div");
+    inputRow.className = "tag-manage-edit-input-row";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = condition.name;
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.textContent = "Save";
+    saveBtn.className = "tag-manage-rename-save";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+
+    inputRow.append(input, saveBtn, cancelBtn);
+
+    const errorEl = document.createElement("p");
+    errorEl.className = "import-status";
+
+    row.append(inputRow, errorEl);
+    input.focus();
+    input.select();
+
+    cancelBtn.addEventListener("click", () => renderConditionManageList());
+
+    async function commitRename() {
+      const newName = input.value.trim();
+      if (!newName || newName === condition.name) {
+        renderConditionManageList();
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        await DB.renameCondition(condition.name, newName);
+        await loadPickerData();
+        await loadConditionUsage();
+        renderConditionManageList();
+      } catch (err) {
+        errorEl.textContent = err.message || "Couldn't rename that condition.";
+        saveBtn.disabled = false;
+      }
+    }
+
+    saveBtn.addEventListener("click", commitRename);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitRename();
+      } else if (e.key === "Escape") {
+        renderConditionManageList();
+      }
+    });
+  }
+
+  /**
+   * Two-tap in-page confirmation, same reasoning as Log's factor-entry
+   * delete: window.confirm() silently no-ops in an installed iOS home-screen
+   * PWA. Only one row can be "armed" at a time - arming a different row's
+   * delete disarms whichever was previously armed.
+   */
+  async function handleDeleteCondition(name) {
+    if (armedConditionDeleteName !== name) {
+      armedConditionDeleteName = name;
+      renderConditionManageList();
+      return;
+    }
+
+    await DB.deleteCondition(name);
+    armedConditionDeleteName = null;
+    await loadPickerData();
+    await loadConditionUsage();
+    renderConditionManageList();
+  }
+
   // ---- Manage Factors ----
 
   const FACTOR_DISPLAY_TYPES = [
@@ -1008,6 +1162,13 @@ const DataView = (() => {
         Rename a tag if the wording no longer fits — every entry using it updates automatically.
       </p>
       <div id="tag-manage-list" class="tag-manage-list"></div>
+
+      <hr class="section-divider" />
+      <h2 class="section-heading">Manage Conditions</h2>
+      <p class="export-note" style="margin-top: 0">
+        Rename or delete a condition - every entry using it updates (or drops it) automatically.
+      </p>
+      <div id="condition-manage-list" class="tag-manage-list"></div>
 
       <hr class="section-divider" />
       <h2 class="section-heading">Manage Factors</h2>
@@ -1151,7 +1312,9 @@ const DataView = (() => {
     await loadExportSummary();
     await loadPickerData();
     await loadTagUsage();
+    await loadConditionUsage();
     renderTagManageList();
+    renderConditionManageList();
     renderFactorManageList();
   }
 
@@ -1159,7 +1322,9 @@ const DataView = (() => {
     await loadExportSummary();
     await loadPickerData();
     await loadTagUsage();
+    await loadConditionUsage();
     renderTagManageList();
+    renderConditionManageList();
     renderFactorManageList();
   }
 
