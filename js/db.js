@@ -319,6 +319,65 @@ const DB = (() => {
     return renamed;
   }
 
+  /**
+   * Merges `sourceName` into `targetName`: every entry that has the source
+   * tag gets the target tag instead (deduped if it already had both), the
+   * source name is preserved on those entries as a `[merged: SourceName]`
+   * note annotation so it isn't lost as a descriptor, and the source tag's
+   * lookup-list record is deleted. Unlike renameTag, `targetName` must
+   * already exist - merging into a brand-new name isn't "merge", it's
+   * "rename". Same atomic two-store transaction shape as renameTag.
+   * @param {string} sourceName
+   * @param {string} targetName
+   * @returns {Promise<{mergedCount: number}>}
+   * @throws if `sourceName`/`targetName` don't exist, or they're the same tag
+   */
+  async function mergeTag(sourceName, targetName) {
+    const trimmedTarget = (targetName || "").trim();
+    if (!trimmedTarget) throw new Error("Pick a tag to merge into.");
+    if (trimmedTarget === sourceName) throw new Error("Can't merge a tag into itself.");
+
+    const db = await open();
+    const transaction = db.transaction(["tags", "entries"], "readwrite");
+    const tagStore = transaction.objectStore("tags");
+    const entryStore = transaction.objectStore("entries");
+
+    const existingSource = await promisifyRequest(tagStore.get(sourceName));
+    if (!existingSource) throw new Error(`Tag "${sourceName}" not found.`);
+
+    const existingTarget = await promisifyRequest(tagStore.get(trimmedTarget));
+    if (!existingTarget) throw new Error(`Tag "${trimmedTarget}" not found.`);
+
+    const mergeAnnotation = `[merged: ${sourceName}]`;
+    const affectedEntries = await promisifyRequest(entryStore.index("tags").getAll(sourceName));
+    let earliestAffected = null;
+
+    for (const entry of affectedEntries) {
+      const tagSet = new Set(entry.tags.filter((t) => t !== sourceName));
+      tagSet.add(trimmedTarget); // naturally dedupes if the entry already had the target tag too
+      const note = entry.note.includes(mergeAnnotation)
+        ? entry.note // already annotated (defensive - a repeat merge shouldn't stack the same note twice)
+        : entry.note
+        ? `${entry.note} ${mergeAnnotation}`
+        : mergeAnnotation;
+      await promisifyRequest(entryStore.put({ ...entry, tags: [...tagSet], note }));
+
+      const t = new Date(entry.timestamp);
+      if (!earliestAffected || t < earliestAffected) earliestAffected = t;
+    }
+
+    // Same "firstUsed never moves forward, only corrects backward" rule as
+    // touchTag - a merged-in entry that predates the target's own firstUsed
+    // must not get clipped out of the target's future Trends/Reports charts.
+    if (earliestAffected && earliestAffected < new Date(existingTarget.firstUsed)) {
+      await promisifyRequest(tagStore.put({ ...existingTarget, firstUsed: earliestAffected.toISOString() }));
+    }
+
+    await promisifyRequest(tagStore.delete(sourceName));
+
+    return { mergedCount: affectedEntries.length };
+  }
+
   // --- Conditions ---
 
   /** Same idempotent create-if-missing pattern as touchTag, for the condition list. */
@@ -745,6 +804,7 @@ const DB = (() => {
     getAllTags,
     mergeTagRecord,
     renameTag,
+    mergeTag,
     touchCondition,
     getAllConditions,
     mergeConditionRecord,

@@ -24,6 +24,7 @@ const DataView = (() => {
   let structuredImportMode = "append"; // "append" | "replace" - reset to "append" on every new file pick
   let candidates = []; // text-extraction candidates awaiting review
   let tagUsageCounts = {}; // tag name -> entry count, for the Manage Tags list
+  let tagManageSortMode = "name"; // "name" | "frequency" - view-only, not persisted to Settings
   let conditionUsageCounts = {}; // condition name -> entry count, for the Manage Conditions list
   let armedConditionDeleteName = null; // two-tap delete: first tap arms this condition's row, a second tap deletes
   let pendingTemperatureImport = null; // { readings, skippedCount } awaiting confirmation
@@ -829,10 +830,20 @@ const DataView = (() => {
       return;
     }
 
-    allTags
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .forEach((tag) => wrap.appendChild(buildTagManageRow(tag)));
+    const sorted = allTags.slice().sort((a, b) => {
+      if (tagManageSortMode === "frequency") {
+        return (tagUsageCounts[a.name] || 0) - (tagUsageCounts[b.name] || 0);
+      }
+      return a.name.localeCompare(b.name);
+    });
+    sorted.forEach((tag) => wrap.appendChild(buildTagManageRow(tag)));
+  }
+
+  /** Keeps the Manage Tags sort chips in sync with tagManageSortMode. */
+  function syncTagManageSortChips() {
+    container.querySelectorAll("#tag-manage-sort-row .chip").forEach((chip) => {
+      chip.setAttribute("aria-pressed", chip.dataset.sort === tagManageSortMode ? "true" : "false");
+    });
   }
 
   function buildTagManageRow(tag) {
@@ -855,12 +866,24 @@ const DataView = (() => {
 
     row.appendChild(info);
 
+    const actions = document.createElement("div");
+    actions.className = "tag-manage-actions";
+
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "tag-manage-rename-btn";
     renameBtn.textContent = "Rename";
     renameBtn.addEventListener("click", () => startTagRename(row, tag));
-    row.appendChild(renameBtn);
+    actions.appendChild(renameBtn);
+
+    const mergeBtn = document.createElement("button");
+    mergeBtn.type = "button";
+    mergeBtn.className = "tag-manage-rename-btn";
+    mergeBtn.textContent = "Merge";
+    mergeBtn.addEventListener("click", () => startTagMerge(row, tag));
+    actions.appendChild(mergeBtn);
+
+    row.appendChild(actions);
 
     return row;
   }
@@ -922,6 +945,90 @@ const DataView = (() => {
         commitRename();
       } else if (e.key === "Escape") {
         renderTagManageList();
+      }
+    });
+  }
+
+  /**
+   * Swaps a tag row into an inline merge form: a <select> of every other
+   * tag (labeled with its own entry count) plus a two-tap Merge/Confirm
+   * button - merge is more destructive than rename or delete (it rewrites
+   * both tags and notes on every affected entry), so it gets both an
+   * explicit non-defaulted target choice and a second confirming tap.
+   */
+  function startTagMerge(row, tag) {
+    row.innerHTML = "";
+    row.classList.add("tag-manage-row-editing");
+
+    const others = allTags.filter((t) => t.name !== tag.name).sort((a, b) => a.name.localeCompare(b.name));
+
+    const inputRow = document.createElement("div");
+    inputRow.className = "tag-manage-edit-input-row";
+
+    const select = document.createElement("select");
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Merge into...";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.appendChild(placeholder);
+    others.forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t.name;
+      const count = tagUsageCounts[t.name] || 0;
+      opt.textContent = `${t.name} (${count} ${count === 1 ? "entry" : "entries"})`;
+      select.appendChild(opt);
+    });
+
+    const mergeBtn = document.createElement("button");
+    mergeBtn.type = "button";
+    mergeBtn.textContent = "Merge";
+    mergeBtn.className = "tag-manage-rename-save";
+    mergeBtn.disabled = others.length === 0;
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Cancel";
+
+    inputRow.append(select, mergeBtn, cancelBtn);
+
+    const errorEl = document.createElement("p");
+    errorEl.className = "import-status";
+
+    row.append(inputRow, errorEl);
+
+    cancelBtn.addEventListener("click", () => renderTagManageList());
+
+    let armed = false;
+
+    select.addEventListener("change", () => {
+      armed = false;
+      mergeBtn.textContent = "Merge";
+    });
+
+    mergeBtn.addEventListener("click", async () => {
+      const targetName = select.value;
+      if (!targetName) {
+        errorEl.textContent = "Pick a tag to merge into.";
+        return;
+      }
+      if (!armed) {
+        armed = true;
+        mergeBtn.textContent = "Confirm merge?";
+        errorEl.textContent = "";
+        return;
+      }
+      mergeBtn.disabled = true;
+      try {
+        await DB.mergeTag(tag.name, targetName);
+        await loadPickerData();
+        await loadTagUsage();
+        renderTagManageList();
+      } catch (err) {
+        errorEl.textContent = err.message || "Couldn't merge that tag.";
+        mergeBtn.disabled = false;
+        armed = false;
+        mergeBtn.textContent = "Merge";
       }
     });
   }
@@ -1164,8 +1271,14 @@ const DataView = (() => {
       <hr class="section-divider" />
       <h2 class="section-heading">Manage Tags</h2>
       <p class="export-note" style="margin-top: 0">
-        Rename a tag if the wording no longer fits — every entry using it updates automatically.
+        Rename a tag if the wording no longer fits — every entry using it updates automatically. Merge
+        a low-frequency tag into another to declutter — the old name is kept in the entry's note as a
+        descriptor.
       </p>
+      <div class="chip-row" id="tag-manage-sort-row">
+        <button type="button" class="chip" data-sort="name" aria-pressed="true">Sort: Name</button>
+        <button type="button" class="chip" data-sort="frequency" aria-pressed="false">Sort: Frequency</button>
+      </div>
       <div id="tag-manage-list" class="tag-manage-list"></div>
 
       <hr class="section-divider" />
@@ -1311,6 +1424,14 @@ const DataView = (() => {
         factorLogImportMode = chip.dataset.importMode;
         syncFactorLogImportModeChips();
         await renderFactorLogSummary();
+      });
+    });
+
+    container.querySelectorAll("#tag-manage-sort-row .chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        tagManageSortMode = chip.dataset.sort;
+        syncTagManageSortChips();
+        renderTagManageList();
       });
     });
 

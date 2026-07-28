@@ -897,7 +897,8 @@ textarea {
   align-items: center;
 }
 
-.tag-manage-edit-input-row input[type="text"] {
+.tag-manage-edit-input-row input[type="text"],
+.tag-manage-edit-input-row select {
   width: auto;
   flex: 1;
   min-width: 0;
