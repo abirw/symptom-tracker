@@ -31,6 +31,7 @@ const APP_SHELL = [
   "./js/tag-picker-field.js",
   "./js/importer.js",
   "./js/bucketing.js",
+  "./js/heatmap.js",
   "./js/analysis.js",
   "./js/log.js",
   "./js/timeline.js",
