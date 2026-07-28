@@ -216,7 +216,7 @@ const TimelineView = (() => {
   function getFilteredEntries() {
     let list = getFilterBarEntries();
     if (selectedDay) {
-      list = list.filter((e) => dateKey(new Date(e.timestamp)) === selectedDay);
+      list = list.filter((e) => Heatmap.dateKey(new Date(e.timestamp)) === selectedDay);
     }
     return list.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   }
@@ -233,108 +233,17 @@ const TimelineView = (() => {
 
   // --- Heatmap ---
 
-  /** Local (not UTC) YYYY-MM-DD key, used to group entries by calendar day. */
-  function dateKey(d) {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }
-
-  function startOfWeekSun(date) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - d.getDay());
-    return d;
-  }
-
-  /** Builds HEATMAP_WEEKS weeks of 7 days each, ending on the week containing today. */
-  function buildHeatmapWeeks() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const firstWeekStart = startOfWeekSun(today);
-    firstWeekStart.setDate(firstWeekStart.getDate() - (HEATMAP_WEEKS - 1) * 7);
-
-    const weeks = [];
-    for (let w = 0; w < HEATMAP_WEEKS; w++) {
-      const weekStart = new Date(firstWeekStart);
-      weekStart.setDate(weekStart.getDate() + w * 7);
-      const days = [];
-      for (let d = 0; d < 7; d++) {
-        const date = new Date(weekStart);
-        date.setDate(date.getDate() + d);
-        days.push(date);
-      }
-      weeks.push(days);
-    }
-    return weeks;
-  }
-
-  /** Maps a raw entry count to one of the heatmap's frequency-mode color levels (0-4). */
-  function levelForCount(count) {
-    if (count <= 0) return 0;
-    if (count === 1) return 1;
-    if (count === 2) return 2;
-    if (count === 3) return 3;
-    return 4;
-  }
-
-  /** Per-day entry count + severities (whichever the current color mode needs), keyed by dateKey. */
-  function computeHeatmapDayStats() {
-    const stats = new Map();
-    getFilterBarEntries().forEach((e) => {
-      const key = dateKey(new Date(e.timestamp));
-      if (!stats.has(key)) stats.set(key, { count: 0, severities: [] });
-      const day = stats.get(key);
-      day.count++;
-      if (e.severity != null) day.severities.push(e.severity);
-    });
-    return stats;
-  }
-
-  /**
-   * Resolves one day's color level + tooltip for the current heatmap color
-   * mode. Frequency reuses the existing 0-4 count-based levels; the two
-   * severity modes reuse the app's 1-5 severity color scale directly (level
-   * 0 means no severity was logged that day, distinct from no entries at all).
-   */
-  function describeHeatmapDay(stats, mode, dateLabel) {
-    const count = stats ? stats.count : 0;
-    const entryWord = count === 1 ? "entry" : "entries";
-
-    if (mode === "frequency") {
-      return { attr: "level", level: levelForCount(count), title: `${count} ${entryWord} on ${dateLabel}` };
-    }
-
-    const severities = stats ? stats.severities : [];
-    if (severities.length === 0) {
-      const suffix = count > 0 ? ` (${count} ${entryWord}, no severity logged)` : "";
-      return { attr: "sevLevel", level: 0, title: `No severity data on ${dateLabel}${suffix}` };
-    }
-
-    const value =
-      mode === "avgSeverity" ? severities.reduce((a, b) => a + b, 0) / severities.length : Math.max(...severities);
-    const level = Math.max(1, Math.min(5, Math.round(value)));
-    const label = mode === "avgSeverity" ? "avg severity" : "max severity";
-    const valueLabel = mode === "avgSeverity" ? value.toFixed(1) : String(value);
-    return { attr: "sevLevel", level, title: `${label} ${valueLabel} (${count} ${entryWord}) on ${dateLabel}` };
-  }
-
   /** Rebuilds the "Less/More" or "Mild/Severe" legend swatches to match the current color mode. */
   function renderHeatmapLegend() {
     const legendEl = container.querySelector("#heatmap-legend");
     const mode = Settings.get("heatmapColorMode");
     legendEl.innerHTML = "";
 
+    const { attr, swatchCount, startLabel: startText, endLabel: endText } = Heatmap.legendSpec(mode);
     const startLabel = document.createElement("span");
     const endLabel = document.createElement("span");
-    const swatchCount = mode === "frequency" ? 5 : 6; // frequency: levels 0-4; severity: levels 0-5
-    const attr = mode === "frequency" ? "level" : "sevLevel";
-
-    if (mode === "frequency") {
-      startLabel.textContent = "Less";
-      endLabel.textContent = "More";
-    } else {
-      startLabel.textContent = "Mild";
-      endLabel.textContent = "Severe";
-    }
+    startLabel.textContent = startText;
+    endLabel.textContent = endText;
 
     legendEl.appendChild(startLabel);
     for (let i = 0; i < swatchCount; i++) {
@@ -398,8 +307,8 @@ const TimelineView = (() => {
     renderHeatmapLegend();
 
     const mode = Settings.get("heatmapColorMode");
-    const weeks = buildHeatmapWeeks();
-    const dayStats = computeHeatmapDayStats();
+    const weeks = Heatmap.buildHeatmapWeeks(HEATMAP_WEEKS);
+    const dayStats = Heatmap.computeHeatmapDayStats(getFilterBarEntries());
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -423,7 +332,7 @@ const TimelineView = (() => {
       col.className = "heatmap-week";
 
       week.forEach((date) => {
-        const key = dateKey(date);
+        const key = Heatmap.dateKey(date);
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "heatmap-day";
@@ -434,7 +343,7 @@ const TimelineView = (() => {
           btn.disabled = true;
         } else {
           const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-          const { attr, level, title } = describeHeatmapDay(dayStats.get(key), mode, dateLabel);
+          const { attr, level, title } = Heatmap.describeHeatmapDay(dayStats.get(key), mode, dateLabel);
           btn.dataset[attr] = String(level);
           btn.title = title;
           if (key === selectedDay) btn.classList.add("heatmap-day-selected");

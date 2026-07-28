@@ -19,6 +19,9 @@
   --sev-3: #e0b84a;
   --sev-4: #e08a45;
   --sev-5: #e0665a;
+
+  --heatmap-cell: 14px;
+  --heatmap-gap: 3px;
 }
 
 * {
@@ -461,8 +464,8 @@ textarea {
 .heatmap-months {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 14px;
-  gap: 3px;
+  grid-auto-columns: var(--heatmap-cell);
+  gap: var(--heatmap-gap);
   font-size: 0.65rem;
   color: var(--text-dim);
   margin-bottom: 0.3rem;
@@ -477,21 +480,21 @@ textarea {
 .heatmap-grid {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 14px;
-  gap: 3px;
+  grid-auto-columns: var(--heatmap-cell);
+  gap: var(--heatmap-gap);
   min-width: max-content;
 }
 
 .heatmap-week {
   display: grid;
-  grid-template-rows: repeat(7, 14px);
-  gap: 3px;
+  grid-template-rows: repeat(7, var(--heatmap-cell));
+  gap: var(--heatmap-gap);
 }
 
 .heatmap-day {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
+  width: var(--heatmap-cell);
+  height: var(--heatmap-cell);
+  border-radius: var(--heatmap-gap);
   border: none;
   padding: 0;
   background: var(--surface-raised);
@@ -1223,6 +1226,25 @@ input[type="file"]::file-selector-button {
   #view-root {
     padding: 0;
     overflow: visible;
+  }
+
+  /* The 52-week grid is ~884px wide at the screen cell size, independent of
+     container width (unlike Chart.js canvases, which resize responsively) -
+     shrinking it is load-bearing, not cosmetic, so it fits a printed page
+     without clipping or an awkward page break. */
+  :root {
+    --heatmap-cell: 7px;
+    --heatmap-gap: 2px;
+  }
+
+  .heatmap-scroll {
+    overflow: visible;
+  }
+
+  .heatmap-day[data-level="0"],
+  .heatmap-day[data-sev-level="0"],
+  .heatmap-day-empty {
+    background: #e8e8e8;
   }
 
   body {

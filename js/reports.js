@@ -28,8 +28,19 @@
  * "Most Severe Logged Events" (Analysis.computeMostSevereEntries) - both
  * scoped to the same Condition-filtered/range-windowed pool as everything
  * else on this screen.
+ *
+ * Every report (Overview, a symptom, or a factor) also gets an "Activity"
+ * heatmap card (renderHeatmapCard, sharing js/heatmap.js's day-bucketing/
+ * color-level math with Timeline's own heatmap) - always a fixed trailing
+ * 52 weeks, independent of the Range selector, since the Range filter would
+ * otherwise usually leave the grid nearly empty. It reads/writes the same
+ * Settings "heatmapColorMode" key Timeline uses, except on a factor's report,
+ * where the mode toggle is hidden and forced to "frequency" since factor
+ * entries carry no severity.
  */
 const ReportsView = (() => {
+  const HEATMAP_WEEKS = 52;
+
   let container;
   let entries = [];
   let tags = [];
@@ -591,6 +602,96 @@ const ReportsView = (() => {
     });
   }
 
+  /**
+   * A simpler, non-interactive counterpart to Timeline's heatmap, reusing
+   * Heatmap's shared day-bucketing/color-level math. Always a fixed
+   * trailing 52-week window, independent of the Range selector above (which
+   * would otherwise usually leave the grid almost empty) - `caption` says
+   * so explicitly, so it doesn't read as a bug. Mode choice reads/writes
+   * the SAME Settings "heatmapColorMode" key Timeline uses, so switching it
+   * in one place doesn't leave the other showing something different -
+   * unless `showModeToggle` is false (factor entries have no severity, so
+   * forcing "frequency" there avoids ever showing a broken-feeling blank
+   * grid under a severity color mode with no toggle to escape it).
+   */
+  function renderHeatmapCard(bodyEl, poolEntries, { title = "Activity", showModeToggle = true, caption } = {}) {
+    const mode = showModeToggle ? Settings.get("heatmapColorMode") : "frequency";
+    const weeks = Heatmap.buildHeatmapWeeks(HEATMAP_WEEKS);
+    const dayStats = Heatmap.computeHeatmapDayStats(poolEntries);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dataAttr = (attr) => (attr === "sevLevel" ? "sev-level" : "level");
+
+    let lastMonthKey = null;
+    const monthsHtml = weeks
+      .map((week) => {
+        const firstOfMonthDay = week.find((d) => d.getDate() <= 7);
+        let label = "";
+        if (firstOfMonthDay) {
+          const monthKey = `${firstOfMonthDay.getFullYear()}-${firstOfMonthDay.getMonth()}`;
+          if (monthKey !== lastMonthKey) {
+            label = firstOfMonthDay.toLocaleDateString(undefined, { month: "short" });
+            lastMonthKey = monthKey;
+          }
+        }
+        return `<span class="heatmap-month-label">${label}</span>`;
+      })
+      .join("");
+
+    const gridHtml = weeks
+      .map((week) => {
+        const daysHtml = week
+          .map((date) => {
+            if (date > today) return `<div class="heatmap-day heatmap-day-empty"></div>`;
+            const key = Heatmap.dateKey(date);
+            const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+            const { attr, level, title: dayTitle } = Heatmap.describeHeatmapDay(dayStats.get(key), mode, dateLabel);
+            return `<div class="heatmap-day" data-${dataAttr(attr)}="${level}" title="${escapeHtml(dayTitle)}"></div>`;
+          })
+          .join("");
+        return `<div class="heatmap-week">${daysHtml}</div>`;
+      })
+      .join("");
+
+    const legendSpec = Heatmap.legendSpec(mode);
+    let legendHtml = `<span>${legendSpec.startLabel}</span>`;
+    for (let i = 0; i < legendSpec.swatchCount; i++) {
+      legendHtml += `<span class="heatmap-day" data-${dataAttr(legendSpec.attr)}="${i}"></span>`;
+    }
+    legendHtml += `<span>${legendSpec.endLabel}</span>`;
+
+    const modeRowHtml = showModeToggle
+      ? `<div class="heatmap-mode-row chip-row no-print">
+          <button type="button" class="chip" data-heatmap-mode="frequency" aria-pressed="${mode === "frequency"}">Frequency</button>
+          <button type="button" class="chip" data-heatmap-mode="avgSeverity" aria-pressed="${mode === "avgSeverity"}">Avg severity</button>
+          <button type="button" class="chip" data-heatmap-mode="maxSeverity" aria-pressed="${mode === "maxSeverity"}">Max severity</button>
+        </div>`
+      : "";
+
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="chart-card">
+        <h3>${title}</h3>
+        ${caption ? `<p class="export-note" style="margin-top: 0">${caption}</p>` : ""}
+        ${modeRowHtml}
+        <div class="heatmap-scroll">
+          <div class="heatmap-months">${monthsHtml}</div>
+          <div class="heatmap-grid">${gridHtml}</div>
+        </div>
+        <div class="heatmap-legend">${legendHtml}</div>
+      </div>`
+    );
+
+    if (showModeToggle) {
+      bodyEl.querySelectorAll(".heatmap-mode-row .chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          Settings.set("heatmapColorMode", chip.dataset.heatmapMode);
+          renderReport();
+        });
+      });
+    }
+  }
+
   /** Two ranked top-5 lists (Most Frequent, Highest Avg Severity) in one card - Overview-level "what stands out", not scoped to any one symptom. */
   function renderSymptomRankings(bodyEl, rankings) {
     if (rankings.byFrequency.length === 0) return;
@@ -653,7 +754,7 @@ const ReportsView = (() => {
 
   // --- Overview (no symptom selected) ---
 
-  function renderOverview(bodyEl, pool, printMode) {
+  function renderOverview(bodyEl, pool, allPool, printMode) {
     const avgSeverity = Analysis.weightedAvgSeverity(pool);
     const rankings = Analysis.computeSymptomRankings(pool);
     const mostLogged = rankings.byFrequency[0];
@@ -673,6 +774,10 @@ const ReportsView = (() => {
       </div>`
     );
 
+    renderHeatmapCard(bodyEl, allPool, {
+      title: "Activity",
+      caption: "Always shows the last 52 weeks, regardless of the Range filter above.",
+    });
     renderSymptomRankings(bodyEl, rankings);
     renderMostSevereEvents(bodyEl, pool);
     renderNotesWordFrequency(bodyEl, pool, printMode);
@@ -727,7 +832,7 @@ const ReportsView = (() => {
     }
 
     if (!tagName) {
-      renderOverview(bodyEl, windowedPool, printMode);
+      renderOverview(bodyEl, windowedPool, pool, printMode);
       return;
     }
 
@@ -741,6 +846,10 @@ const ReportsView = (() => {
     const streaks = Analysis.computeStreaksAndGaps(windowedPool, tagName, new Date());
 
     bodyEl.insertAdjacentHTML("beforeend", buildStatCardsHtml(focusEntries, streaks));
+    renderHeatmapCard(bodyEl, filterByTag(pool, tagName), {
+      title: `${tagName} Activity`,
+      caption: "Always shows the last 52 weeks, regardless of the Range filter above.",
+    });
     renderFrequencySeverityCharts(bodyEl, focusEntries, tagName, start, end, printMode);
     renderSeverityDistribution(bodyEl, focusEntries, printMode);
     renderDayOfWeek(bodyEl, focusEntries, printMode);
@@ -790,6 +899,11 @@ const ReportsView = (() => {
     const symptomsResult = Analysis.computeSymptomsOnFactorDays(windowedFactorEntries, factorName, windowedPool);
 
     bodyEl.insertAdjacentHTML("beforeend", buildFactorStatCardsHtml(focusFactorEntries, streaks, symptomsResult));
+    renderHeatmapCard(bodyEl, factorEntries.filter((fe) => fe.name === factorName), {
+      title: `${factorName} Activity`,
+      showModeToggle: false,
+      caption: "Always shows the last 52 weeks, regardless of the Range filter above.",
+    });
     renderFactorFrequencyChart(bodyEl, focusFactorEntries, factorName, start, end, printMode);
     renderDayOfWeek(bodyEl, adapted, printMode);
     renderStreaksCard(bodyEl, streaks);
