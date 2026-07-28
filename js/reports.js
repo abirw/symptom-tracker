@@ -22,6 +22,12 @@
  * factor's own streaks/clusters/day-of-week reuse the exact same Analysis
  * functions as a symptom's, via a tiny adapter that reshapes factor entries
  * ({timestamp, name}) into the {timestamp, tags} shape those functions expect.
+ *
+ * Overview (no symptom/factor selected) also gets "Symptom Rankings" (most
+ * frequent, highest avg severity - Analysis.computeSymptomRankings) and
+ * "Most Severe Logged Events" (Analysis.computeMostSevereEntries) - both
+ * scoped to the same Condition-filtered/range-windowed pool as everything
+ * else on this screen.
  */
 const ReportsView = (() => {
   let container;
@@ -206,6 +212,11 @@ const ReportsView = (() => {
 
   function statCard(label, value) {
     return `<div class="stat-card"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`;
+  }
+
+  /** Escapes free-form user text (note content) before it's interpolated into an HTML string via insertAdjacentHTML - unlike a tag/condition/factor name, a note can contain "<"/">" incidentally (e.g. "BP was <120/80") and would otherwise corrupt the markup, not just pose an injection risk. */
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
   function formatDays(n) {
@@ -580,14 +591,72 @@ const ReportsView = (() => {
     });
   }
 
+  /** Two ranked top-5 lists (Most Frequent, Highest Avg Severity) in one card - Overview-level "what stands out", not scoped to any one symptom. */
+  function renderSymptomRankings(bodyEl, rankings) {
+    if (rankings.byFrequency.length === 0) return;
+
+    const freqRows = rankings.byFrequency
+      .slice(0, 5)
+      .map(
+        (r) =>
+          `<div class="cooccur-row"><span class="chip chip-static">${r.name}</span><span class="cooccur-pct">${r.count} ${r.count === 1 ? "occurrence" : "occurrences"}</span></div>`
+      )
+      .join("");
+
+    const sevRows = rankings.bySeverity.length
+      ? rankings.bySeverity
+          .slice(0, 5)
+          .map(
+            (r) =>
+              `<div class="cooccur-row"><span class="chip chip-static">${r.name}</span><span class="cooccur-pct">avg ${r.avgSeverity.toFixed(1)}</span></div>`
+          )
+          .join("")
+      : `<p class="placeholder" style="margin-top: 0.5rem;">No severity data logged yet.</p>`;
+
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="chart-card">
+        <h3>Symptom Rankings</h3>
+        <h4 class="word-trend-title">Most Frequent</h4>
+        <div class="cooccur-list">${freqRows}</div>
+        <h4 class="word-trend-title">Highest Avg Severity</h4>
+        <div class="cooccur-list">${sevRows}</div>
+      </div>`
+    );
+  }
+
+  /** The most severe individual logged entries, so a handful of especially bad moments don't get lost in aggregate stats. */
+  function renderMostSevereEvents(bodyEl, pool) {
+    const severe = Analysis.computeMostSevereEntries(pool, { topN: 5, minSeverity: 4 });
+    if (severe.length === 0) return;
+
+    const rows = severe
+      .map((e) => {
+        const tags = (e.tags || []).map((name) => `<span class="chip chip-static">${name}</span>`).join("");
+        const noteHtml = e.note ? `<div class="timeline-item-note">${escapeHtml(e.note)}</div>` : "";
+        return `<div class="cluster-item">
+          <div class="cluster-range">${Bucketing.formatDate(e.timestamp)}</div>
+          <div class="timeline-item-tags">${tags}<span class="severity-badge" data-severity="${e.severity}">Sev ${e.severity}</span></div>
+          ${noteHtml}
+        </div>`;
+      })
+      .join("");
+
+    bodyEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="chart-card">
+        <h3>Most Severe Logged Events</h3>
+        <div class="cluster-list">${rows}</div>
+      </div>`
+    );
+  }
+
   // --- Overview (no symptom selected) ---
 
   function renderOverview(bodyEl, pool, printMode) {
     const avgSeverity = Analysis.weightedAvgSeverity(pool);
-
-    const tagCounts = new Map();
-    pool.forEach((e) => (e.tags || []).forEach((name) => tagCounts.set(name, (tagCounts.get(name) || 0) + Analysis.occurrenceCount(e))));
-    const mostLogged = [...tagCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    const rankings = Analysis.computeSymptomRankings(pool);
+    const mostLogged = rankings.byFrequency[0];
 
     const earliest = pool.reduce((min, e) => {
       const t = new Date(e.timestamp);
@@ -599,11 +668,13 @@ const ReportsView = (() => {
       `<div class="stat-grid">
         ${statCard("Total Occurrences", Analysis.totalOccurrences(pool))}
         ${statCard("Tracking Span", earliest ? `${Bucketing.formatDate(earliest)} – now` : "—")}
-        ${statCard("Most-Logged Symptom", mostLogged ? mostLogged[0] : "—")}
+        ${statCard("Most-Logged Symptom", mostLogged ? mostLogged.name : "—")}
         ${statCard("Avg Severity", avgSeverity != null ? avgSeverity.toFixed(1) : "—")}
       </div>`
     );
 
+    renderSymptomRankings(bodyEl, rankings);
+    renderMostSevereEvents(bodyEl, pool);
     renderNotesWordFrequency(bodyEl, pool, printMode);
   }
 

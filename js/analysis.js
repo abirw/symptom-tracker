@@ -111,6 +111,44 @@ const Analysis = (() => {
   }
 
   /**
+   * Ranks every tag two ways: by total occurrence count (weighted, descending)
+   * and by occurrence-weighted average severity (descending, ties excluded
+   * for tags that never had a severity logged). Both are just Overview-level
+   * "what stands out" summaries - not scoped to any one focused symptom.
+   */
+  function computeSymptomRankings(entries) {
+    const byTag = new Map(); // name -> entries[]
+    entries.forEach((e) => (e.tags || []).forEach((name) => {
+      if (!byTag.has(name)) byTag.set(name, []);
+      byTag.get(name).push(e);
+    }));
+
+    const byFrequency = [...byTag.entries()]
+      .map(([name, list]) => ({ name, count: totalOccurrences(list) }))
+      .sort((a, b) => b.count - a.count);
+
+    const bySeverity = [...byTag.entries()]
+      .map(([name, list]) => ({ name, avgSeverity: weightedAvgSeverity(list) }))
+      .filter((r) => r.avgSeverity != null)
+      .sort((a, b) => b.avgSeverity - a.avgSeverity);
+
+    return { byFrequency, bySeverity };
+  }
+
+  /**
+   * The most severe individual logged entries (severity >= minSeverity),
+   * highest severity first, most recent among ties. Occurrence count isn't
+   * a factor here - it's about which specific logged moments stood out, not
+   * a tally.
+   */
+  function computeMostSevereEntries(entries, { topN = 5, minSeverity = 4 } = {}) {
+    return entries
+      .filter((e) => e.severity != null && e.severity >= minSeverity)
+      .sort((a, b) => b.severity - a.severity || new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, topN);
+  }
+
+  /**
    * Counts entries per time-of-day value, weighted by occurrenceCount, in
    * the order `options` gives them (Log's TIME_OF_DAY_OPTIONS, passed in by
    * the caller so this stays framework-free rather than importing LogView's
@@ -407,6 +445,8 @@ const Analysis = (() => {
     weightedAvgSeverity,
     computeDayOfWeekDistribution,
     computeSeverityDistribution,
+    computeSymptomRankings,
+    computeMostSevereEntries,
     computeTimeOfDayDistribution,
     computeCoOccurrence,
     computeFactorCoOccurrence,
